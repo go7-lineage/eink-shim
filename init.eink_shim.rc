@@ -1,0 +1,8 @@
+on boot
+    # The composer (uid system) opens /dev/ebc for full-screen refreshes
+    chown system system /dev/ebc
+    chmod 0660 /dev/ebc
+
+    # A2 frame cut, written by the composer on mode change
+    chown system system /sys/devices/virtual/sepdc/debug/cut_frame_num
+    chmod 0660 /sys/devices/virtual/sepdc/debug/cut_frame_num

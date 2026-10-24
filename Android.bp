@@ -1,0 +1,19 @@
+rust_ffi_shared {
+    name: "libeink_shim",
+    crate_name: "eink_shim",
+    crate_root: "src/lib.rs",
+    edition: "2024",
+    vendor: true,
+    prefer_rlib: true,
+    rustlibs: ["liblibc"],
+    lints: "android",
+    clippy_lints: "android",
+    required: ["init.eink_shim.rc"],
+}
+
+prebuilt_etc {
+    name: "init.eink_shim.rc",
+    src: "init.eink_shim.rc",
+    sub_dir: "init",
+    vendor: true,
+}

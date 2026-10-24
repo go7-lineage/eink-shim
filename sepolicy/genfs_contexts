@@ -1,0 +1,1 @@
+genfscon sysfs /devices/virtual/sepdc/debug/cut_frame_num u:object_r:sysfs_sepdc:s0
