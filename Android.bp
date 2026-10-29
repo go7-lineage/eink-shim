@@ -8,7 +8,10 @@ rust_ffi_shared {
     rustlibs: ["liblibc"],
     lints: "android",
     clippy_lints: "android",
-    required: ["init.eink_shim.rc"],
+    required: [
+        "init.eink_shim.rc",
+        "EinkShimTile",
+    ],
 }
 
 prebuilt_etc {

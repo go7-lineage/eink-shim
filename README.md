@@ -1,6 +1,6 @@
 # eink-shim
 
-E-Ink support shim for the Boox Go 7 on LineageOS
+E-Ink support shim and QS tile for the Boox Go 7 on LineageOS
 
 ## Using in a device tree
 

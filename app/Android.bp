@@ -1,0 +1,8 @@
+android_app {
+    name: "EinkShimTile",
+    srcs: ["src/**/*.java"],
+    resource_dirs: ["res"],
+    manifest: "AndroidManifest.xml",
+    platform_apis: true,
+    certificate: "platform",
+}
