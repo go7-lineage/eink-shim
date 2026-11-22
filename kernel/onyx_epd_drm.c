@@ -13,6 +13,7 @@
 #include <linux/miscdevice.h>
 #include <linux/module.h>
 #include <linux/of.h>
+#include <linux/of_graph.h>
 #include <linux/platform_device.h>
 #include <linux/pm_wakeup.h>
 #include <linux/regulator/consumer.h>
@@ -24,6 +25,7 @@
 
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
+#include <drm/drm_bridge.h>
 #include <drm/drm_client.h>
 #include <drm/drm_crtc.h>
 #include <drm/drm_crtc_helper.h>
@@ -40,7 +42,6 @@
 #include <drm/drm_probe_helper.h>
 #include <drm/drm_property.h>
 #include <drm/drm_vblank.h>
-#include <drm/onyx/msm_dsi_client.h>
 #include <linux/onyx_epd.h>
 
 #include "epd_core.h"
@@ -632,9 +633,21 @@ static int epd_thread(void *data)
 
 static void epd_marker_done(void *ctx, u32 marker) { }
 
+static struct drm_device *epd_dsi_drm_device(struct device_node *dsi_np)
+{
+	struct device_node *panel_np = of_graph_get_remote_node(dsi_np, 1, 0);
+	struct drm_bridge *bridge;
+
+	if (!panel_np)
+		return NULL;
+	bridge = of_drm_find_bridge(panel_np);
+	of_node_put(panel_np);
+	return bridge ? bridge->dev : NULL;
+}
+
 static int epd_setup_output(struct onyx_epd *p)
 {
-	struct drm_device *out = msm_dsi_drm_device(p->dsi_np);
+	struct drm_device *out = epd_dsi_drm_device(p->dsi_np);
 	struct iosys_map map;
 	int i, ret;
 
@@ -1356,7 +1369,7 @@ static int onyx_epd_probe(struct platform_device *pdev)
 	ret = devm_add_action_or_reset(dev, epd_node_put, p->dsi_np);
 	if (ret)
 		return ret;
-	out = msm_dsi_drm_device(p->dsi_np);
+	out = epd_dsi_drm_device(p->dsi_np);
 	if (!out || !out->registered)
 		return dev_err_probe(dev, -EPROBE_DEFER, "waiting for the DSI host's DRM device\n");
 	ret = epd_link_tcon(dev);
