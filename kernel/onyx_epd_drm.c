@@ -1249,18 +1249,26 @@ static const struct file_operations ebc_fops = {
 static int onyx_epd_suspend(struct device *dev)
 {
 	struct onyx_epd *p = dev_get_drvdata(dev);
+	ktime_t t0 = ktime_get();
+	u64 frames0 = READ_ONCE(p->frames);
+	bool busy = false, engine = false;
+	int queued = 0;
 	int i;
 
 	for (i = 0; i < 200; i++) {
-		bool busy;
-
 		mutex_lock(&p->lock);
-		busy = (p->eng && epd_engine_busy(p->eng)) || p->q.n;
+		engine = p->eng && epd_engine_busy(p->eng);
+		queued = p->q.n;
 		mutex_unlock(&p->lock);
+		busy = engine || queued;
 		if (!busy || !p->client_ok)
 			break;
 		msleep(10);
 	}
+	if (busy && p->client_ok)
+		dev_warn(dev, "suspend: still busy after %lld ms (engine %d, queued %d, frames %llu -> %llu, link %d)\n",
+			 ktime_ms_delta(ktime_get(), t0), engine, queued, frames0,
+			 READ_ONCE(p->frames), READ_ONCE(p->link_on));
 	cancel_delayed_work_sync(&p->power_off);
 	cancel_delayed_work_sync(&p->link_off);
 	mutex_lock(&p->lock);
