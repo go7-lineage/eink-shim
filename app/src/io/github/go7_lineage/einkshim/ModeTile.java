@@ -10,7 +10,7 @@ public class ModeTile extends TileService {
     private static final String TAG = "EinkShimTile";
     private static final String PROP = "persist.vendor.eink_shim.mode";
 
-    // Same names in the shim's src/modes.rs, first is default
+    // Same names as ui_modes in kernel/core/epd_ui.c, first is default
     private static final String[] MODES = { "speed", "normal", "regal", "regalplus" };
     private static final String[] NAMES = { "Speed", "Normal", "Regal", "Regal+" };
 

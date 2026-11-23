@@ -2,7 +2,7 @@
 /*
  * Go 7 e-ink DSI frame (E1).
  */
-#include "epd_core.h"
+#include "epd_frame.h"
 
 #define GDCLK	(1u << 17)
 #define GDSP	(1u << 18)
@@ -38,7 +38,7 @@ void epd_frame_template(const struct epd_timing *t, u32 *buf)
 	long lt = epd_lt(t), low, high, after_low, half, shift, p, r;
 	struct tbuf tb = { buf, (long)epd_frame_words(t) };
 
-	memset(buf, 0, tb.size * sizeof(*buf));
+	memset(buf, 0, (size_t)tb.size * sizeof(*buf));
 	if (t->lgonl == 0 && t->gdck_sta == 0) {
 		low = lt >> 3;
 		high = lt - low;
@@ -95,5 +95,22 @@ void epd_frame_encode(const struct epd_timing *t, const u32 *tmpl, const u8 *dri
 				w |= (u32)(d[8 * x + k] & 3) << (14 - 2 * k);
 			row[x] |= w;
 		}
+	}
+}
+
+void epd_frame_copy(const struct epd_timing *t, const u32 *src, u32 *dst, size_t pitch, bool swap)
+{
+	u32 lt = epd_lt(t), rows = epd_rows(t), x, y;
+
+	for (y = 0; y < rows; y++) {
+		u32 *d = dst + (size_t)y * (pitch / sizeof(*dst));
+		const u32 *s = src + (size_t)y * lt;
+
+		if (!swap) {
+			memcpy(d, s, (size_t)lt * sizeof(*s));
+			continue;
+		}
+		for (x = 0; x < lt; x++)
+			d[x] = (s[x] & 0xffff0000u) | (s[x] & 0xff) << 8 | (s[x] >> 8 & 0xff);
 	}
 }

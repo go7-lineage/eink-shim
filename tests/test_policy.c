@@ -1,0 +1,325 @@
+// SPDX-License-Identifier: GPL-2.0-only
+#include <string.h>
+
+#include "epd_policy.h"
+#include "test.h"
+
+#define DU	1
+#define GC16	2
+#define A2	4
+#define REGAL	5
+#define AUTO	0xff
+
+static struct epd_decision apply(struct epd_policy *p, int mode, int update_mode, u32 flags)
+{
+	struct epd_request r = { .top = 1, .left = 2, .width = 3, .height = 4, .mode = mode,
+				 .update_mode = update_mode, .marker = 77, .flags = flags };
+	struct epd_decision d;
+
+	memset(&d, 0xee, sizeof(d));
+	epd_policy_apply(p, &r, &d);
+	CHECK_EQ(d.upd.top, 1);
+	CHECK_EQ(d.upd.left, 2);
+	CHECK_EQ(d.upd.width, 3);
+	CHECK_EQ(d.upd.height, 4);
+	CHECK_EQ(d.upd.marker, 77);
+	CHECK_EQ(d.flags, flags);
+	return d;
+}
+
+#define EXPECT(d, m, f, b)			\
+	do {					\
+		struct epd_decision d_ = (d);	\
+						\
+		CHECK_EQ(d_.upd.mode, m);	\
+		CHECK_EQ(d_.upd.full, f);	\
+		CHECK_EQ(d_.barrier, b);	\
+	} while (0)
+
+TEST(policy_first_update_passes_through)
+{
+	struct epd_policy p;
+
+	epd_policy_init(&p, true);
+	EXPECT(apply(&p, GC16, 0, 0), GC16, false, false);
+	epd_policy_init(&p, true);
+	EXPECT(apply(&p, GC16, 1, 0), GC16, true, false);
+	epd_policy_init(&p, true);
+	EXPECT(apply(&p, AUTO, 0, 0), GC16, false, false);
+	epd_policy_init(&p, true);
+	EXPECT(apply(&p, A2, 0, 0), A2, true, false);
+	epd_policy_init(&p, true);
+	EXPECT(apply(&p, DU, 0, 0x8000), DU, true, false);
+}
+
+TEST(policy_leaving_du_is_a_full_barrier)
+{
+	struct epd_policy p;
+
+	epd_policy_init(&p, false);
+	apply(&p, DU, 0, 0);
+	EXPECT(apply(&p, DU, 0, 0), DU, false, false);
+	EXPECT(apply(&p, GC16, 0, 8), GC16, true, true);
+	EXPECT(apply(&p, GC16, 0, 8), GC16, false, false);
+}
+
+TEST(policy_gc16_without_flag_8_is_fenced_from_du_and_a2)
+{
+	struct epd_policy p;
+
+	epd_policy_init(&p, false);
+	apply(&p, GC16, 0, 0);
+	EXPECT(apply(&p, A2, 0, 0), A2, true, true);
+	EXPECT(apply(&p, GC16, 0, 0), GC16, true, true);
+	EXPECT(apply(&p, DU, 0, 0), DU, false, true);
+
+	epd_policy_init(&p, false);
+	apply(&p, GC16, 0, 8);
+	EXPECT(apply(&p, A2, 0, 0), A2, true, false);
+	EXPECT(apply(&p, GC16, 0, 8), GC16, true, false);
+}
+
+TEST(policy_auto_counts_as_gc16)
+{
+	struct epd_policy p;
+
+	epd_policy_init(&p, false);
+	apply(&p, AUTO, 0, 0);
+	EXPECT(apply(&p, DU, 0, 0), DU, false, true);
+	EXPECT(apply(&p, AUTO, 0, 0), GC16, true, true);
+}
+
+TEST(policy_leaving_regal_is_full)
+{
+	struct epd_policy p;
+
+	epd_policy_init(&p, false);
+	apply(&p, REGAL, 0, 0);
+	EXPECT(apply(&p, 16, 0, 0), 16, false, false);
+	EXPECT(apply(&p, GC16, 0, 8), GC16, true, false);
+}
+
+TEST(policy_a2_entry_is_du_when_cleaning)
+{
+	struct epd_policy p;
+
+	epd_policy_init(&p, true);
+	apply(&p, GC16, 0, 8);
+	EXPECT(apply(&p, A2, 0, 0), DU, true, false);
+	EXPECT(apply(&p, A2, 0, 0), A2, true, false);
+	EXPECT(apply(&p, GC16, 0, 8), GC16, true, true);
+
+	epd_policy_init(&p, false);
+	apply(&p, GC16, 0, 8);
+	EXPECT(apply(&p, A2, 0, 0), A2, true, false);
+	EXPECT(apply(&p, GC16, 0, 8), GC16, true, false);
+}
+
+static struct epd_decision dec(u16 left, u16 top, u16 w, u16 h, int mode, bool full, u32 marker)
+{
+	struct epd_decision d = { .upd = { .top = top, .left = left, .width = w, .height = h, .mode = mode,
+					   .full = full, .marker = marker } };
+
+	return d;
+}
+
+TEST(queue_is_fifo)
+{
+	struct epd_queue q;
+	struct epd_decision d, out;
+	u32 i;
+
+	epd_queue_init(&q);
+	CHECK(!epd_queue_pop(&q, false, &out));
+	for (i = 0; i < 40; i++) {
+		d = dec(0, 0, 8, 8, GC16, false, i);
+		epd_queue_push(&q, &d);
+		d = dec(0, 0, 8, 8, GC16, false, 100 + i);
+		epd_queue_push(&q, &d);
+		CHECK(epd_queue_pop(&q, true, &out));
+		CHECK_EQ(out.upd.marker, i);
+		CHECK(epd_queue_pop(&q, true, &out));
+		CHECK_EQ(out.upd.marker, 100 + i);
+	}
+	CHECK(!epd_queue_pop(&q, false, &out));
+	CHECK_EQ(q.coalesced, 0);
+}
+
+TEST(queue_barrier_waits_for_the_engine)
+{
+	struct epd_queue q;
+	struct epd_decision d = dec(0, 0, 8, 8, GC16, false, 1), out;
+
+	epd_queue_init(&q);
+	d.barrier = true;
+	epd_queue_push(&q, &d);
+	d = dec(0, 0, 8, 8, GC16, false, 2);
+	epd_queue_push(&q, &d);
+	CHECK(!epd_queue_pop(&q, true, &out));
+	CHECK_EQ(q.n, 2);
+	CHECK(epd_queue_pop(&q, false, &out));
+	CHECK_EQ(out.upd.marker, 1);
+	CHECK(epd_queue_pop(&q, true, &out));
+	CHECK_EQ(out.upd.marker, 2);
+}
+
+TEST(queue_merges_overlapping_tail_of_the_same_kind)
+{
+	struct epd_queue q;
+	struct epd_decision d, out;
+
+	epd_queue_init(&q);
+	q.merge = true;
+	d = dec(10, 10, 20, 20, DU, false, 1);
+	epd_queue_push(&q, &d);
+	d = dec(25, 5, 10, 10, DU, false, 2);
+	epd_queue_push(&q, &d);
+	CHECK_EQ(q.n, 1);
+	CHECK_EQ(q.coalesced, 1);
+	d = dec(100, 100, 4, 4, DU, false, 3);
+	epd_queue_push(&q, &d);
+	d = dec(100, 100, 4, 4, GC16, false, 4);
+	epd_queue_push(&q, &d);
+	d = dec(100, 100, 4, 4, GC16, true, 5);
+	epd_queue_push(&q, &d);
+	d = dec(100, 100, 4, 4, GC16, true, 6);
+	d.flags = 8;
+	epd_queue_push(&q, &d);
+	d = dec(100, 100, 4, 4, GC16, true, 7);
+	d.flags = 8;
+	d.barrier = true;
+	epd_queue_push(&q, &d);
+	CHECK_EQ(q.n, 6);
+	CHECK(epd_queue_pop(&q, false, &out));
+	CHECK_EQ(out.upd.left, 10);
+	CHECK_EQ(out.upd.top, 5);
+	CHECK_EQ(out.upd.width, 25);
+	CHECK_EQ(out.upd.height, 25);
+	CHECK_EQ(out.upd.marker, 2);
+}
+
+TEST(queue_does_not_merge_unless_enabled)
+{
+	struct epd_queue q;
+	struct epd_decision d = dec(10, 10, 20, 20, DU, false, 1);
+
+	epd_queue_init(&q);
+	epd_queue_push(&q, &d);
+	epd_queue_push(&q, &d);
+	CHECK_EQ(q.n, 2);
+}
+
+TEST(queue_overflow_folds_into_the_tail)
+{
+	struct epd_queue q;
+	struct epd_decision d, out;
+	u32 i;
+
+	epd_queue_init(&q);
+	for (i = 0; i < EPD_QMAX; i++) {
+		d = dec((u16)(10 * i), 0, 5, 5, DU, false, i);
+		epd_queue_push(&q, &d);
+	}
+	d = dec(500, 40, 10, 10, GC16, true, 99);
+	d.flags = 8;
+	d.barrier = true;
+	epd_queue_push(&q, &d);
+	CHECK_EQ(q.n, EPD_QMAX);
+	CHECK_EQ(q.coalesced, 1);
+	for (i = 0; i < EPD_QMAX - 1; i++) {
+		CHECK(epd_queue_pop(&q, false, &out));
+		CHECK_EQ(out.upd.marker, i);
+	}
+	CHECK(!epd_queue_pop(&q, true, &out));
+	CHECK(epd_queue_pop(&q, false, &out));
+	CHECK_EQ(out.upd.left, 150);
+	CHECK_EQ(out.upd.top, 0);
+	CHECK_EQ(out.upd.width, 360);
+	CHECK_EQ(out.upd.height, 50);
+	CHECK_EQ(out.upd.mode, GC16);
+	CHECK_EQ(out.upd.full, true);
+	CHECK_EQ(out.upd.marker, 99);
+	CHECK_EQ(out.flags, 8);
+	CHECK(!epd_queue_pop(&q, false, &out));
+}
+
+TEST(queue_does_not_merge_rectangles_that_only_touch)
+{
+	static const u16 at[4][2] = { { 30, 10 }, { 0, 10 }, { 10, 30 }, { 10, 0 } };
+	struct epd_queue q;
+	struct epd_decision d;
+	u32 i;
+
+	for (i = 0; i < 4; i++) {
+		epd_queue_init(&q);
+		q.merge = true;
+		d = dec(10, 10, 20, 20, DU, false, 1);
+		epd_queue_push(&q, &d);
+		d = dec(at[i][0], at[i][1], 10, 10, DU, false, 2);
+		epd_queue_push(&q, &d);
+		CHECK_EQ(q.n, 2);
+	}
+}
+
+static bool clip(s32 left, s32 top, s32 width, s32 height, struct epd_request *r)
+{
+	memset(r, 0xee, sizeof(*r));
+	return epd_request_clip(r, left, top, width, height, 1264, 1680);
+}
+
+#define EXPECT_RECT(r, x, y, w, h)		\
+	do {					\
+		CHECK_EQ((r)->left, x);		\
+		CHECK_EQ((r)->top, y);		\
+		CHECK_EQ((r)->width, w);	\
+		CHECK_EQ((r)->height, h);	\
+	} while (0)
+
+TEST(request_clip_inside_is_unchanged)
+{
+	struct epd_request r;
+
+	CHECK(clip(10, 20, 30, 40, &r));
+	EXPECT_RECT(&r, 10, 20, 30, 40);
+	CHECK(clip(0, 0, 1264, 1680, &r));
+	EXPECT_RECT(&r, 0, 0, 1264, 1680);
+	CHECK(clip(1263, 1679, 1, 1, &r));
+	EXPECT_RECT(&r, 1263, 1679, 1, 1);
+	CHECK_EQ(r.mode, (int)0xeeeeeeee);
+}
+
+TEST(request_clip_cuts_at_the_far_edges)
+{
+	struct epd_request r;
+
+	CHECK(clip(1200, 1600, 500, 500, &r));
+	EXPECT_RECT(&r, 1200, 1600, 64, 80);
+	CHECK(clip(0, 0, 0x7fffffff, 0x7fffffff, &r));
+	EXPECT_RECT(&r, 0, 0, 1264, 1680);
+}
+
+TEST(request_clip_cuts_at_the_near_edges)
+{
+	struct epd_request r;
+
+	CHECK(clip(-10, -20, 100, 200, &r));
+	EXPECT_RECT(&r, 0, 0, 90, 180);
+	CHECK(!clip(-0x7fffffff - 1, 5, 0x7fffffff, 1, &r));
+	CHECK(clip(-0x7fffffff - 1, 5, -1, 1, &r) == false);
+	CHECK(clip(-1, -1, 0x7fffffff, 0x7fffffff, &r));
+	EXPECT_RECT(&r, 0, 0, 1264, 1680);
+}
+
+TEST(request_clip_rejects_empty_and_outside)
+{
+	struct epd_request r;
+
+	CHECK(!clip(0, 0, 0, 10, &r));
+	CHECK(!clip(0, 0, 10, 0, &r));
+	CHECK(!clip(0, 0, -5, 10, &r));
+	CHECK(!clip(1264, 0, 10, 10, &r));
+	CHECK(!clip(0, 1680, 10, 10, &r));
+	CHECK(!clip(-10, 0, 10, 10, &r));
+	CHECK(!clip(0, -10, 10, 10, &r));
+	CHECK(!clip(0x7fffffff, 0x7fffffff, 0x7fffffff, 0x7fffffff, &r));
+}

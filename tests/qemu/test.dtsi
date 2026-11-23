@@ -1,0 +1,101 @@
+/ {
+	reg_vsys: regulator-vsys {
+		compatible = "regulator-fixed";
+		regulator-name = "vsys";
+		regulator-min-microvolt = <3700000>;
+		regulator-max-microvolt = <3700000>;
+	};
+	reg_1v8: regulator-1v8 {
+		compatible = "regulator-fixed";
+		regulator-name = "vdd1v8";
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <1800000>;
+	};
+	reg_3v0: regulator-3v0 {
+		compatible = "regulator-fixed";
+		regulator-name = "vdd3v";
+		regulator-min-microvolt = <3000000>;
+		regulator-max-microvolt = <3000000>;
+	};
+	reg_1v15: regulator-1v15 {
+		compatible = "regulator-fixed";
+		regulator-name = "vdd1v2";
+		regulator-min-microvolt = <1150000>;
+		regulator-max-microvolt = <1150000>;
+	};
+	reg_display: regulator-display {
+		compatible = "regulator-fixed";
+		regulator-name = "display";
+	};
+	reg_vcom: regulator-vcom {
+		compatible = "regulator-fixed";
+		regulator-name = "vcom";
+		regulator-min-microvolt = <1840000>;
+		regulator-max-microvolt = <1840000>;
+	};
+	reg_v3p3: regulator-v3p3 {
+		compatible = "regulator-fixed";
+		regulator-name = "v3p3";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+	};
+
+	i2c-tcon {
+		compatible = "i2c-gpio";
+		sda-gpios = <&{@GPIO@} 0 6>;
+		scl-gpios = <&{@GPIO@} 1 6>;
+		i2c-gpio,scl-output-only;
+		i2c-gpio,delay-us = <1>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		tcon: tcon@3c {
+			compatible = "onyx,go7-mxo1300";
+			reg = <0x3c>;
+			vsys-supply = <&reg_vsys>;
+			vdd1v8-supply = <&reg_1v8>;
+			vdd3v-supply = <&reg_3v0>;
+			vdd1v2-supply = <&reg_1v15>;
+			reset-gpios = <&{@GPIO@} 5 1>;
+		};
+	};
+
+	dsi: dsi {
+		compatible = "onyx,test-dsi";
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		panel@0 {
+			compatible = "onyx,go7-eink-dsi";
+			reg = <0>;
+			reset-gpios = <&{@GPIO@} 6 1>;
+
+			port {
+				panel_in: endpoint {
+					remote-endpoint = <&dsi_out>;
+				};
+			};
+		};
+
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			port@1 {
+				reg = <1>;
+				dsi_out: endpoint {
+					remote-endpoint = <&panel_in>;
+				};
+			};
+		};
+	};
+
+	epd {
+		compatible = "onyx,go7-epd";
+		onyx,dsi = <&dsi>;
+		onyx,tcon = <&tcon>;
+		display-supply = <&reg_display>;
+		vcom-supply = <&reg_vcom>;
+		v3p3-supply = <&reg_v3p3>;
+	};
+};

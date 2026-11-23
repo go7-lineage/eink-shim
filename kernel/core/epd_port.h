@@ -44,6 +44,10 @@ typedef uint16_t u16;
 typedef uint32_t u32;
 typedef uint64_t u64;
 typedef int16_t s16;
+typedef int32_t s32;
+typedef int64_t s64;
+
+#define ARRAY_SIZE(a)	(sizeof(a) / sizeof((a)[0]))
 
 static inline void *epd_zalloc(size_t n)
 {
@@ -54,6 +58,10 @@ static inline void epd_free(void *p)
 {
 	free(p);
 }
+#endif
+
+#ifndef __always_inline
+#define __always_inline		inline
 #endif
 
 #ifndef epd_simd_begin

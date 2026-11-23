@@ -2,11 +2,11 @@
 /*
  * .wbf parser.
  */
-#include "epd_core.h"
+#include "epd_wbf.h"
 
 static u32 u24(const u8 *d, size_t o)
 {
-	return d[o] | d[o + 1] << 8 | d[o + 2] << 16;
+	return (u32)d[o] | (u32)d[o + 1] << 8 | (u32)d[o + 2] << 16;
 }
 
 static u8 sum8(const u8 *d, size_t from, size_t to)
@@ -76,7 +76,7 @@ static long wbf_rle(const struct epd_wbf *w, u32 off, u8 *out, size_t cap)
 	}
 	if (i + 1 >= w->size || d[i + 1] != (u8)(total + w->end_byte))
 		return -EINVAL;
-	return n;
+	return (long)n;
 }
 
 int epd_wbf_parse(struct epd_wbf *w, const u8 *d, size_t size)
@@ -95,7 +95,7 @@ int epd_wbf_parse(struct epd_wbf *w, const u8 *d, size_t size)
 
 	w->mode_version = d[0x10];
 	wfm_rev = d[0x16];
-	w->frame_rate = wfm_rev == 2 ? (d[0x17] & 0xf) + (d[0x17] >> 4) * 10 : d[0x18];
+	w->frame_rate = wfm_rev == 2 ? (u8)((d[0x17] & 0xf) + (d[0x17] >> 4) * 10) : d[0x18];
 	mode_table = u24(d, 0x20);
 	lut_fmt = d[0x24];
 	w->n_modes = d[0x25] + 1;
@@ -106,13 +106,13 @@ int epd_wbf_parse(struct epd_wbf *w, const u8 *d, size_t size)
 	w->levels = (lut_fmt == 4 || w->mode_version == 0x90) ? 32 : 16;
 	l2 = w->levels * w->levels;
 
-	o = 0x30 + w->n_temps + 3;
+	o = (size_t)0x30 + w->n_temps + 3;
 	if (o > size)
 		return -EINVAL;
-	memcpy(w->temp_bounds, d + 0x30, w->n_temps + 1);
-	if (sum8(d, 0x30, 0x30 + w->n_temps + 1) != d[0x30 + w->n_temps + 1])
+	memcpy(w->temp_bounds, d + 0x30, (size_t)w->n_temps + 1);
+	if (sum8(d, 0x30, o - 2) != d[o - 2])
 		return -EINVAL;
-	n = d[0x30 + w->n_temps + 2];
+	n = d[o - 1];
 	if (o + n > size)
 		return -EINVAL;
 	memcpy(w->name, d + o, n);
@@ -141,14 +141,14 @@ int epd_wbf_parse(struct epd_wbf *w, const u8 *d, size_t size)
 				ret = -EINVAL;
 				goto err;
 			}
-			w->nframes[m * w->n_temps + t] = ret / l2;
+			w->nframes[m * w->n_temps + t] = (u16)(ret / l2);
 		}
 	}
 	return 0;
 
 err:
 	epd_wbf_release(w);
-	return ret;
+	return (int)ret;
 }
 
 void epd_wbf_release(struct epd_wbf *w)
@@ -166,7 +166,7 @@ int epd_wbf_decode(const struct epd_wbf *w, int temp, int mode, u8 *out, size_t 
 	if (temp < 0 || temp >= w->n_temps || mode < 0 || mode >= w->n_modes)
 		return -EINVAL;
 	ret = wbf_rle(w, w->block[mode * w->n_temps + temp], out, cap);
-	return ret < 0 ? ret : ret / (w->levels * w->levels);
+	return (int)(ret < 0 ? ret : ret / (w->levels * w->levels));
 }
 
 int epd_temp_index(const struct epd_wbf *w, int temp_c)
@@ -210,7 +210,7 @@ int epd_mode_slot(u8 mode_version, int onyx_mode)
 
 	if (onyx_mode == 14)
 		return 0;
-	for (i = 0; i < sizeof(wf_trans_info) / sizeof(wf_trans_info[0]); i++)
+	for (i = 0; i < ARRAY_SIZE(wf_trans_info); i++)
 		if (wf_trans_info[i][0] == mode_version)
 			row = wf_trans_info[i];
 	if (!row)

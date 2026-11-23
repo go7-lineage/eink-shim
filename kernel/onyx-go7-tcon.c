@@ -148,7 +148,7 @@ static int mxo_probe(struct i2c_client *client)
 	if (ret)
 		return ret;
 
-	msleep(10);
+	usleep_range(10000, 11000);
 	ret = mxo_read_cmd(mxo, MXO_CMD_IDCODE, &mxo->idcode);
 	if (!ret)
 		ret = mxo_read_cmd(mxo, MXO_CMD_USERCODE, &mxo->usercode);

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-only
-#include "epd_core.h"
+#include "epd_tables.h"
 
 #define E(new, old)	((new) << 4 | (old))
 
@@ -7,7 +7,8 @@ static void a2_clean_mode2(u8 *full, int n)
 {
 	static const u8 to_black[] = { 1, 2, 3, 8, 12, 13, 14 };
 	static const u8 to_white[] = { 1, 2, 3, 7, 12, 13, 14 };
-	int f, i;
+	size_t i;
+	int f;
 
 	for (f = 0; f < n - 1; f++) {
 		for (i = 0; i < sizeof(to_black); i++)

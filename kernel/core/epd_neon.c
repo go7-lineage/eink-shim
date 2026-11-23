@@ -2,20 +2,20 @@
 /*
  * NEON kernels
  */
+#include "epd_engine.h"
+#include "epd_neon.h"
+#include "epd_row.h"
+
+#ifdef __KERNEL__
+#include <asm/neon-intrinsics.h>
+#else
 #include <arm_neon.h>
+#endif
 
-#define EPD_IDLE	0x7f
-
-/* same as in epd_core.h */
-void epd_row_neon(const uint8_t *state, const uint8_t *owner, const uint8_t *const *cur, uint32_t *out, uint32_t npix);
-void epd_rgba_to_grey_neon(const uint8_t *src, unsigned long sstride, uint8_t *dst, unsigned long dstride,
-			   uint32_t w, uint32_t h, uint8_t mask, int ggg, int bgr);
-void epd_regal_aa_mark_neon(const uint8_t *levels, unsigned long stride, uint32_t w, uint32_t h, uint8_t *mark, int shift);
-void epd_threshold16_neon(uint8_t *buf, uint32_t w, const uint8_t *t16);
-void epd_threshold16_neon(uint8_t *buf, uint32_t w, const uint8_t *t16)
+void epd_threshold16_neon(u8 *buf, u32 w, const u8 *t16)
 {
 	uint8x16_t t = vld1q_u8(t16);
-	uint32_t x;
+	u32 x;
 
 	for (x = 0; x + 16 <= w; x += 16)
 		vst1q_u8(buf + x, vcgtq_u8(vld1q_u8(buf + x), t));
@@ -23,27 +23,12 @@ void epd_threshold16_neon(uint8_t *buf, uint32_t w, const uint8_t *t16)
 		buf[x] = buf[x] > t16[x & 15] ? 0xff : 0;
 }
 
-static inline __attribute__((always_inline)) void
-row_scalar(const uint8_t *state, const uint8_t *owner, const uint8_t *const *cur, uint32_t *out,
-	   uint32_t npix)
-{
-	uint32_t x, k;
-
-	for (x = 0; x < npix; x += 8) {
-		uint32_t w = 0;
-
-		for (k = 0; k < 8; k++)
-			w |= (uint32_t)cur[owner[x + k]][state[x + k]] << (14 - 2 * k);
-		out[x / 8] = (out[x / 8] & ~0xffffu) | w;
-	}
-}
-
-static inline __attribute__((always_inline)) int uniform16(const uint8_t *owner, uint8_t o)
+static __always_inline int uniform16(const u8 *owner, u8 o)
 {
 	return vminvq_u8(vceqq_u8(vld1q_u8(owner), vdupq_n_u8(o))) == 0xff;
 }
 
-static inline __attribute__((always_inline)) uint32x2_t pack16(uint8x16_t r)
+static __always_inline uint32x2_t pack16(uint8x16_t r)
 {
 	uint16x8_t l = vreinterpretq_u16_u8(r);
 	uint16x4_t l2;
@@ -56,21 +41,21 @@ static inline __attribute__((always_inline)) uint32x2_t pack16(uint8x16_t r)
 	return vget_low_u32(vmovl_u16(vreinterpret_u16_u8(b)));
 }
 
-void epd_row_neon(const uint8_t *state, const uint8_t *owner, const uint8_t *const *cur,
-		  uint32_t *out, uint32_t npix)
+void epd_row_neon(const u8 *state, const u8 *owner, const u8 *const *cur,
+		  u32 *out, u32 npix)
 {
-	const uint8_t *zero = cur[EPD_IDLE];
+	const u8 *zero = cur[EPD_IDLE];
 	const uint32x2_t ctl = vdup_n_u32(0xffff0000u);
-	uint32_t x = 0, xe;
+	u32 x = 0, xe;
 
 	while (x + 16 <= npix) {
-		const uint8_t o = owner[x];
-		const uint8_t *tab = cur[o];
+		const u8 o = owner[x];
+		const u8 *tab = cur[o];
 
 		for (xe = x; xe + 16 <= npix && uniform16(owner + xe, o); xe += 16)
 			;
 		if (xe == x) {
-			row_scalar(state + x, owner + x, cur, out + x / 8, 16);
+			epd_row_pack(state + x, owner + x, cur, out + x / 8, 16);
 			x += 16;
 			continue;
 		}
@@ -101,8 +86,9 @@ void epd_row_neon(const uint8_t *state, const uint8_t *owner, const uint8_t *con
 				u = vsubq_u8(u, k64);
 				r = vqtbx4q_u8(r, t3, s);
 				q = vqtbx4q_u8(q, t3, u);
-				vst1q_u32(out + x / 8, vorrq_u32(vandq_u32(vld1q_u32(out + x / 8), vcombine_u32(ctl, ctl)),
-								 vcombine_u32(pack16(r), pack16(q))));
+				vst1q_u32(out + x / 8,
+					  vorrq_u32(vandq_u32(vld1q_u32(out + x / 8), vcombine_u32(ctl, ctl)),
+						    vcombine_u32(pack16(r), pack16(q))));
 			}
 			for (; x < xe; x += 16) {
 				uint8x16_t s = vld1q_u8(state + x), r;
@@ -119,16 +105,16 @@ void epd_row_neon(const uint8_t *state, const uint8_t *owner, const uint8_t *con
 		}
 	}
 	if (x < npix)
-		row_scalar(state + x, owner + x, cur, out + x / 8, npix - x);
+		epd_row_pack(state + x, owner + x, cur, out + x / 8, npix - x);
 }
 
-void epd_rgba_to_grey_neon(const uint8_t *src, unsigned long sstride, uint8_t *dst, unsigned long dstride,
-			   uint32_t w, uint32_t h, uint8_t mask, int ggg, int bgr)
+void epd_rgba_to_grey_neon(const u8 *src, size_t sstride, u8 *dst, size_t dstride,
+			   u32 w, u32 h, u8 mask, bool ggg, bool bgr)
 {
-	const uint8_t c0 = bgr ? 28 : 77, c2 = bgr ? 77 : 28;
+	const u8 c0 = bgr ? 28 : 77, c2 = bgr ? 77 : 28;
 	const uint8x8_t k0 = vdup_n_u8(c0), kg = vdup_n_u8(151), k2 = vdup_n_u8(c2);
 	const uint8x16_t m = vdupq_n_u8(mask);
-	uint32_t x, y;
+	u32 x, y;
 
 	for (y = 0; y < h; y++, src += sstride, dst += dstride) {
 		for (x = 0; x + 16 <= w; x += 16) {
@@ -150,17 +136,17 @@ void epd_rgba_to_grey_neon(const uint8_t *src, unsigned long sstride, uint8_t *d
 			vst1q_u8(dst + x, vandq_u8(g, m));
 		}
 		for (; x < w; x++) {
-			const uint8_t *q = src + 4 * x;
+			const u8 *q = src + 4 * x;
 
-			dst[x] = (ggg ? q[0] : (c0 * q[0] + 151 * q[1] + c2 * q[2]) >> 8) & mask;
+			dst[x] = (u8)((ggg ? q[0] : (c0 * q[0] + 151 * q[1] + c2 * q[2]) >> 8) & mask);
 		}
 	}
 }
 
-static inline __attribute__((always_inline)) uint8x16_t load_pad(const uint8_t *p, uint32_t n, uint8_t fill)
+static __always_inline uint8x16_t load_pad(const u8 *p, u32 n, u8 fill)
 {
-	uint8_t t[16];
-	uint32_t i;
+	u8 t[16];
+	u32 i;
 
 	if (n >= 16)
 		return vld1q_u8(p);
@@ -169,19 +155,19 @@ static inline __attribute__((always_inline)) uint8x16_t load_pad(const uint8_t *
 	return vld1q_u8(t);
 }
 
-void epd_regal_aa_mark_neon(const uint8_t *levels, unsigned long stride, uint32_t w, uint32_t h, uint8_t *mark,
+void epd_regal_aa_mark_neon(const u8 *levels, size_t stride, u32 w, u32 h, u8 *mark,
 			    int shift)
 {
-	const int8x16_t sh = vdupq_n_s8(-shift);
+	const int8x16_t sh = vdupq_n_s8((int8_t)-shift);
 	const uint8x16_t k15 = vdupq_n_u8(15), one = vdupq_n_u8(1), zero = vdupq_n_u8(0);
-	const uint8_t fill = 15 << shift;
-	uint32_t x, y;
+	const u8 fill = (u8)(15 << shift);
+	u32 x, y;
 
 	for (y = 0; y < h; y++) {
-		const uint8_t *r0 = levels + (unsigned long)(y ? y - 1 : y) * stride;
-		const uint8_t *r1 = levels + (unsigned long)y * stride;
-		const uint8_t *r2 = levels + (unsigned long)(y + 1 < h ? y + 1 : y) * stride;
-		uint8_t *m = mark + (unsigned long)y * w;
+		const u8 *r0 = levels + (size_t)(y ? y - 1 : y) * stride;
+		const u8 *r1 = levels + (size_t)y * stride;
+		const u8 *r2 = levels + (size_t)(y + 1 < h ? y + 1 : y) * stride;
+		u8 *m = mark + (size_t)y * w;
 		uint8x16_t prev = zero, cur, next;
 
 #define AA_DARK(x, n)	vorrq_u8(vorrq_u8( \
@@ -190,7 +176,7 @@ void epd_regal_aa_mark_neon(const uint8_t *levels, unsigned long stride, uint32_
 			vcltq_u8(vshlq_u8(load_pad(r2 + (x), (n), fill), sh), k15))
 		cur = AA_DARK(0, w);
 		for (x = 0; x < w; x += 16) {
-			uint32_t n = w - x;
+			u32 n = w - x;
 			uint8x16_t r;
 
 			next = x + 16 < w ? AA_DARK(x + 16, w - x - 16) : zero;
@@ -199,8 +185,8 @@ void epd_regal_aa_mark_neon(const uint8_t *levels, unsigned long stride, uint32_
 			if (n >= 16) {
 				vst1q_u8(m + x, r);
 			} else {
-				uint8_t t[16];
-				uint32_t i;
+				u8 t[16];
+				u32 i;
 
 				vst1q_u8(t, r);
 				for (i = 0; i < n; i++)

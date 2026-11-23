@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /* Onyx Boox Go 7 e-ink */
-#ifndef _LINUX_ONYX_EPD_H
-#define _LINUX_ONYX_EPD_H
+#ifndef ONYX_EPD_UAPI_H
+#define ONYX_EPD_UAPI_H
 
 #include <linux/types.h>
 

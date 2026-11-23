@@ -2,7 +2,8 @@
 /*
  * Input conversion (E3)
  */
-#include "epd_core.h"
+#include "epd_convert.h"
+#include "epd_neon.h"
 
 /* rgb32_to_4bit_32_neon / ggg32_to_4bit_32_neon: Y = (77 R + 151 G + 28 B) >> 8, then & mask */
 void epd_rgba_to_grey_scalar(const u8 *src, size_t sstride, u8 *dst, size_t dstride, u32 w, u32 h, u8 mask, bool ggg,
@@ -15,7 +16,7 @@ void epd_rgba_to_grey_scalar(const u8 *src, size_t sstride, u8 *dst, size_t dstr
 		for (x = 0; x < w; x++) {
 			const u8 *p = src + 4 * x;
 
-			dst[x] = (ggg ? p[0] : (k0 * p[0] + 151 * p[1] + k2 * p[2]) >> 8) & mask;
+			dst[x] = (u8)((ggg ? p[0] : (k0 * p[0] + 151 * p[1] + k2 * p[2]) >> 8) & mask);
 		}
 }
 
@@ -64,7 +65,8 @@ static inline void y1_start(struct y1_row *r, u8 *buf, int *e0, int *e1, int *e2
 	r->e2 = e2;
 	r->c0 = e0[0];
 	r->c1 = e0[1];
-	r->p1 = r->p2 = 0;
+	r->p1 = 0;
+	r->p2 = 0;
 }
 
 static inline void y1_step(struct y1_row *r, u32 x, int pix_level, int white)
@@ -93,7 +95,8 @@ void epd_dither_y1(u8 *buf, u32 w, u32 h, size_t stride, int *err, int pix_level
 	for (y = 0; y + 1 < h; y += 2, buf += 2 * stride) {
 		int *ea = &ERR(y, 0), *eb = &ERR(y + 1, 0), *ec = &ERR(y + 2, 0);
 
-		ea[w] = ea[w + 1] = 0;
+		ea[w] = 0;
+		ea[w + 1] = 0;
 		y1_start(&a, buf, ea, eb, ec);
 		for (x = 0; x < w; x++) {
 			y1_step(&a, x, pix_level, white);
@@ -103,7 +106,8 @@ void epd_dither_y1(u8 *buf, u32 w, u32 h, size_t stride, int *err, int pix_level
 				y1_step(&b, x - 3, pix_level, white);
 		}
 		y1_finish(&a, w);
-		eb[w] = eb[w + 1] = 0;
+		eb[w] = 0;
+		eb[w + 1] = 0;
 		if (w <= 3)
 			y1_start(&b, buf + stride, eb, ec, ea);
 		for (x = w > 3 ? w - 3 : 0; x < w; x++)
@@ -113,7 +117,8 @@ void epd_dither_y1(u8 *buf, u32 w, u32 h, size_t stride, int *err, int pix_level
 	if (y < h) {
 		int *ea = &ERR(y, 0);
 
-		ea[w] = ea[w + 1] = 0;
+		ea[w] = 0;
+		ea[w + 1] = 0;
 		y1_start(&a, buf, ea, &ERR(y + 1, 0), &ERR(y + 2, 0));
 		for (x = 0; x < w; x++)
 			y1_step(&a, x, pix_level, white);
@@ -132,7 +137,7 @@ void epd_dither_y4(u8 *buf, u32 w, u32 h, size_t stride, int *err)
 			int b = buf[x], s = c0 + b, c = s < 0 ? 0 : s > 255 ? 255 : s, v;
 
 			v = (b - (c & 0xf0)) >> 3;
-			buf[x] = c & 0xf0;
+			buf[x] = (u8)(c & 0xf0);
 			c0 = c1 + v;
 			c1 = (x + 2 < w ? e0[x + 2] : 0) + v;
 			e2[x] = v;
@@ -154,7 +159,7 @@ void epd_dither_y5(u8 *buf, u32 w, u32 h, size_t stride, int *err)
 
 			if ((u8)(buf[x] + 1) > 1)
 				d = (s - l) >> 1;
-			buf[x] = l < 0 ? 0 : l > 255 ? 255 : l;
+			buf[x] = (u8)(l < 0 ? 0 : l > 255 ? 255 : l);
 			e[1] += d;
 			err[w * ((y + 1) & 1) + x] = d;
 		}
@@ -194,7 +199,7 @@ void epd_dither_y1_ordered(u8 *buf, u32 w, u32 h, size_t stride, u32 x0, u32 y0)
 		u8 t[16];
 
 		for (i = 0; i < 16; i++)
-			t[i] = (2 * bayer8[(y0 + y) & 7][(x0 + i) & 7] + 1) * 255 >> 7;
+			t[i] = (u8)((2 * bayer8[(y0 + y) & 7][(x0 + i) & 7] + 1) * 255 >> 7);
 #ifdef EPD_NEON
 		epd_threshold16_neon(buf, w, t);
 #else
@@ -246,17 +251,17 @@ void epd_regal_aa_mark(const u8 *levels, size_t stride, u32 w, u32 h, u8 *mark, 
 			}
 		}
 		for (x = 0; x < w; x++)
-			m[x] &= r1[x] >> shift == 15;
+			m[x] = (u8)(m[x] & (r1[x] >> shift == 15));
 	}
 }
 
 void epd_convert_update(const u8 *rgba, size_t rgba_stride, u8 *grey, size_t grey_stride, u32 left,
 			u32 top, u32 w, u32 h, u32 flags, bool ggg, bool bgr, const u8 *gamma, int *err)
 {
+	EPD_SIMD_STATE;
 	u8 mask = flags & EPD_DITHER_FLAGS ? 0xff : 0xf0;
 	const u8 *src = rgba + top * rgba_stride + 4 * (size_t)left;
 	u8 *dst = grey + top * grey_stride + left;
-	EPD_SIMD_STATE;
 
 #ifdef EPD_NEON
 	epd_simd_begin();

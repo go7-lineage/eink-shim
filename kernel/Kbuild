@@ -1,6 +1,10 @@
 # SPDX-License-Identifier: GPL-2.0-only
 obj-m += onyx-epd.o onyx-go7-tcon.o panel-onyx-go7-eink.o
-onyx-epd-y := onyx_epd_drm.o epd_wbf.o epd_tables.o epd_frame.o epd_engine.o epd_convert.o epd_policy.o epd_ui.o epd_neon.o
-ccflags-y += -DEPD_NEON -I$(src)/include
-CFLAGS_epd_neon.o += $(CC_FLAGS_FPU)
-CFLAGS_REMOVE_epd_neon.o += $(CC_FLAGS_NO_FPU)
+onyx-epd-y := onyx_epd_drm.o onyx_epd_kms.o onyx_epd_input.o onyx_epd_output.o onyx_epd_power.o
+onyx-epd-y += onyx_epd_sysfs.o
+onyx-epd-y += core/epd_wbf.o core/epd_tables.o core/epd_frame.o core/epd_engine.o core/epd_neon.o
+onyx-epd-y += core/epd_convert.o core/epd_policy.o core/epd_ui.o core/epd_ring.o
+onyx-epd-y += core/epd_pattern.o core/epd_bootargs.o
+ccflags-y += -DEPD_NEON
+CFLAGS_core/epd_neon.o += $(CC_FLAGS_FPU)
+CFLAGS_REMOVE_core/epd_neon.o += $(CC_FLAGS_NO_FPU)

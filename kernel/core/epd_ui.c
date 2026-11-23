@@ -2,8 +2,7 @@
 /*
  * UI refresh policy.
  */
-#include "epd_port.h"
-#include "epd_core.h"
+#include "epd_ui.h"
 
 /* frames closer than this belong to one burst */
 #define UI_BURST_MS		100
@@ -44,7 +43,7 @@ int epd_ui_mode_by_name(const char *name)
 	for (i = 0; i < EPD_UI_NMODES; i++)
 		if (!strcmp(name, ui_modes[i].name))
 			return i;
-	return EPD_UI_SPEED;
+	return -EINVAL;
 }
 
 const char *epd_ui_mode_name(int mode)
@@ -132,8 +131,8 @@ static enum ui_diff ui_diff(struct epd_ui *u, const u8 *frame, u32 pitch, size_t
 		}
 		for (i = a; i <= z; i++)
 			memcpy(&shadow[i], src + (size_t)i * 8, 8);
-		u->rows[y].start = a * 2;
-		u->rows[y].end = (z + 1) * 2;
+		u->rows[y].start = (u16)(a * 2);
+		u->rows[y].end = (u16)((z + 1) * 2);
 		if (!any) {
 			x0 = a * 2;
 			x1 = (z + 1) * 2;
@@ -249,13 +248,13 @@ static int ui_marker(struct epd_ui *u)
 
 static void ui_upd(struct epd_request *r, u32 x, u32 y, u32 w, u32 h, int wf, u32 flag, bool full, int marker)
 {
-	r->top = y;
-	r->left = x;
-	r->width = w;
-	r->height = h;
+	r->top = (u16)y;
+	r->left = (u16)x;
+	r->width = (u16)w;
+	r->height = (u16)h;
 	r->mode = wf;
 	r->update_mode = full;
-	r->marker = marker;
+	r->marker = (u32)marker;
 	r->flags = flag;
 }
 

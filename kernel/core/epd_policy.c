@@ -1,13 +1,29 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Update policy and queue between userspace requests and engine. 
+ * Update policy and queue between userspace requests and engine.
  */
-#include "epd_core.h"
+#include "epd_policy.h"
 
 #define M_DU	1
 #define M_GC16	2
 #define M_A2	4
 #define M_AUTO	0xff
+
+bool epd_request_clip(struct epd_request *r, s32 left, s32 top, s32 width, s32 height, u32 w, u32 h)
+{
+	s64 x0 = left > 0 ? left : 0, y0 = top > 0 ? top : 0;
+	s64 x1 = (s64)left + width, y1 = (s64)top + height;
+
+	x1 = x1 < (s64)w ? x1 : (s64)w;
+	y1 = y1 < (s64)h ? y1 : (s64)h;
+	if (x0 >= x1 || y0 >= y1)
+		return false;
+	r->left = (u16)x0;
+	r->top = (u16)y0;
+	r->width = (u16)(x1 - x0);
+	r->height = (u16)(y1 - y0);
+	return true;
+}
 
 void epd_policy_init(struct epd_policy *p, bool du_a2_clean)
 {
@@ -72,20 +88,18 @@ static bool queue_same_kind(const struct epd_decision *t, const struct epd_decis
 void epd_queue_push(struct epd_queue *q, const struct epd_decision *d)
 {
 	struct epd_decision *t = &q->q[(q->head + q->n + EPD_QMAX - 1) % EPD_QMAX];
-	u32 r, b;
+	u32 tr = (u32)t->upd.left + t->upd.width, dr = (u32)d->upd.left + d->upd.width;
+	u32 tb = (u32)t->upd.top + t->upd.height, db = (u32)d->upd.top + d->upd.height;
+	u32 r = tr > dr ? tr : dr, b = tb > db ? tb : db;
 
 	if (q->n < EPD_QMAX && !(q->merge && q->n && queue_same_kind(t, d))) {
 		q->q[(q->head + q->n++) % EPD_QMAX] = *d;
 		return;
 	}
-	r = t->upd.left + t->upd.width > d->upd.left + d->upd.width ?
-		t->upd.left + t->upd.width : d->upd.left + d->upd.width;
-	b = t->upd.top + t->upd.height > d->upd.top + d->upd.height ?
-		t->upd.top + t->upd.height : d->upd.top + d->upd.height;
 	t->upd.left = t->upd.left < d->upd.left ? t->upd.left : d->upd.left;
 	t->upd.top = t->upd.top < d->upd.top ? t->upd.top : d->upd.top;
-	t->upd.width = r - t->upd.left;
-	t->upd.height = b - t->upd.top;
+	t->upd.width = (u16)(r - t->upd.left);
+	t->upd.height = (u16)(b - t->upd.top);
 	t->upd.mode = d->upd.mode;
 	t->upd.full |= d->upd.full;
 	t->upd.marker = d->upd.marker;
