@@ -6,8 +6,6 @@
 #include <linux/delay.h>
 #include <linux/gpio/consumer.h>
 #include <linux/i2c.h>
-#include <linux/iopoll.h>
-#include <linux/ktime.h>
 #include <linux/mod_devicetable.h>
 #include <linux/module.h>
 #include <linux/pm.h>
@@ -48,12 +46,7 @@ static int mxo_read_cmd(struct mxo *mxo, u8 cmd, u32 *val)
 
 static int mxo_power_on(struct mxo *mxo)
 {
-	struct device *dev = &mxo->client->dev;
-	int done_entry = mxo->done ? gpiod_get_value_cansleep(mxo->done) : -1;
-	int vdd3v = regulator_is_enabled(mxo->supplies[VDD3V].consumer);
-	int vdd1v2 = regulator_is_enabled(mxo->supplies[VDD1V2].consumer);
-	int done_reset, val, ret;
-	ktime_t t0;
+	int ret;
 
 	ret = regulator_bulk_enable(VDD3V, mxo->supplies);
 	if (ret)
@@ -76,15 +69,8 @@ static int mxo_power_on(struct mxo *mxo)
 		usleep_range(2000, 2500);
 	}
 	usleep_range(3000, 3500);
-	done_reset = mxo->done ? gpiod_get_value_cansleep(mxo->done) : -1;
 	gpiod_set_value_cansleep(mxo->reset, 0);
-	t0 = ktime_get();
 	usleep_range(3000, 3500);
-	if (mxo->done && read_poll_timeout(gpiod_get_value_cansleep, val, val == 1, 1000, 2000000,
-					   false, mxo->done))
-		dev_warn(dev, "done still low 2 s after reset release\n");
-	dev_info(dev, "power on: done %d, vdd3v %d, vdd1v2 %d at entry; done %d before reset release, %lld ms to done\n",
-		 done_entry, vdd3v, vdd1v2, done_reset, ktime_ms_delta(ktime_get(), t0));
 	return 0;
 
 err_3v:
