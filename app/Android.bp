@@ -1,5 +1,5 @@
 android_app {
-    name: "EinkShimTile",
+    name: "EinkSettings",
     srcs: ["src/**/*.java"],
     resource_dirs: ["res"],
     manifest: "AndroidManifest.xml",

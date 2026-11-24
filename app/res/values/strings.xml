@@ -1,5 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">E-Ink shim</string>
+    <string name="app_name">E-ink</string>
     <string name="tile_label">E-Ink</string>
+    <string name="gamma_tile_label">Gamma</string>
+    <string name="on">On</string>
+    <string name="off">Off</string>
+    <string name="gamma_switch">Gamma correction</string>
+    <string name="gamma_summary">Higher gamma darkens greys. Greys below the black point turn black, greys above the white point turn white.</string>
+    <string name="black_point">Black point: %1$d</string>
+    <string name="gamma_value">Gamma: %1$s</string>
+    <string name="white_point">White point: %1$d</string>
 </resources>

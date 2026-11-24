@@ -23,6 +23,9 @@ ALL_CFLAGS := -std=gnu11 $(CFLAGS) $(WARN) $(SAN) $(INC)
 FUZZ_CC ?= clang
 FUZZ_SECONDS ?= 60
 CLANG_TIDY ?= clang-tidy
+JAVAC ?= javac
+JAVA ?= java
+APP_PKG := app/src/io/github/go7_lineage/einkshim
 CPPCHECK ?= cppcheck
 
 VARIANTS := scalar
@@ -31,18 +34,19 @@ VARIANTS += neon
 NEON_DEF := -DEPD_NEON
 endif
 
-.PHONY: help check test lint fuzz kernel-lint qemu-test clean $(addprefix test-,$(VARIANTS))
+.PHONY: help check test lint app-test fuzz kernel-lint qemu-test clean $(addprefix test-,$(VARIANTS))
 
 help:
 	@echo "make check        test + lint"
 	@echo "make test         unit tests of the e-ink core with ASan/UBSan ($(VARIANTS)); T=<substring> runs a subset"
 	@echo "make lint         clang-tidy and cppcheck on the core and the tests"
+	@echo "make app-test     host tests of the settings app's value handling (needs a JDK)"
 	@echo "make fuzz         libFuzzer on the waveform parser and the engine for FUZZ_SECONDS=$(FUZZ_SECONDS)"
 	@echo "make kernel-lint  KSRC=<kernel source> KOUT=<its build>: modules with W=1 -Werror, sparse, checkpatch"
 	@echo "make qemu-test    KSRC=<kernel source> KOUT=<build with tests/qemu/kernel.config>: the modules in QEMU"
 	@echo "make clean        remove $(BUILD)/"
 
-check: test lint
+check: test lint app-test
 
 test: $(addprefix test-,$(VARIANTS))
 
@@ -70,6 +74,11 @@ fuzz: $(BUILD)/fuzz-wbf
 $(BUILD)/fuzz-wbf: $(CORE) $(FUZZ_SRC) $(HEADERS)
 	@mkdir -p $(BUILD)
 	$(FUZZ_CC) $(ALL_CFLAGS) -fsanitize=fuzzer -o $@ $(CORE) $(FUZZ_SRC)
+
+app-test:
+	@mkdir -p $(BUILD)/app
+	$(JAVAC) -Xlint:all -Werror -d $(BUILD)/app $(APP_PKG)/Levels.java tests/app/LevelsTest.java
+	$(JAVA) -cp $(BUILD)/app io.github.go7_lineage.einkshim.LevelsTest
 
 kernel-lint:
 	tests/kernel-lint.sh $(KSRC) $(KOUT)
