@@ -126,6 +126,69 @@ EPD_UI_INT_ATTR(ui_gc, gc_interval);
 EPD_UI_INT_ATTR(ui_full, big_pct);
 EPD_UI_INT_ATTR(ui_a2cut, a2cut);
 
+static ssize_t epd_gamma_set(struct onyx_epd *p, const bool *on, const struct epd_levels *l, size_t count)
+{
+	struct epd_levels old;
+	bool was, active, changed;
+
+	mutex_lock(&p->in_lock);
+	was = !!p->gamma;
+	old = p->levels;
+	if (on)
+		p->gamma_on = *on;
+	if (l)
+		p->levels = *l;
+	active = p->gamma_on && !epd_levels_identity(&p->levels);
+	changed = active != was || (active && memcmp(&old, &p->levels, sizeof(old)));
+	if (changed && active)
+		epd_gamma_build(p->gamma_lut, &p->levels);
+	p->gamma = active ? p->gamma_lut : NULL;
+	mutex_unlock(&p->in_lock);
+	if (changed)
+		epd_redraw(p);
+	return count;
+}
+
+static ssize_t ui_gamma_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct onyx_epd *p = dev_get_drvdata(dev);
+
+	return sysfs_emit(buf, "%d\n", p->gamma_on);
+}
+
+static ssize_t ui_gamma_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
+{
+	bool on;
+	int ret = kstrtobool(buf, &on);
+
+	if (ret)
+		return ret;
+	return epd_gamma_set(dev_get_drvdata(dev), &on, NULL, count);
+}
+static DEVICE_ATTR_RW(ui_gamma);
+
+static ssize_t ui_levels_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct onyx_epd *p = dev_get_drvdata(dev);
+	struct epd_levels l;
+
+	mutex_lock(&p->in_lock);
+	l = p->levels;
+	mutex_unlock(&p->in_lock);
+	return sysfs_emit(buf, "%u %u %u\n", l.black, l.gamma, l.white);
+}
+
+static ssize_t ui_levels_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
+{
+	struct epd_levels l;
+	int ret = epd_levels_parse(buf, &l);
+
+	if (ret)
+		return ret;
+	return epd_gamma_set(dev_get_drvdata(dev), NULL, &l, count);
+}
+static DEVICE_ATTR_RW(ui_levels);
+
 static ssize_t test_pattern_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
 {
 	struct onyx_epd *p = dev_get_drvdata(dev);
@@ -163,6 +226,8 @@ static struct attribute *epd_attrs[] = {
 	&dev_attr_ui_gc.attr,
 	&dev_attr_ui_full.attr,
 	&dev_attr_ui_a2cut.attr,
+	&dev_attr_ui_gamma.attr,
+	&dev_attr_ui_levels.attr,
 	NULL
 };
 

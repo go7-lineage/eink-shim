@@ -9,7 +9,7 @@
 
 void epd_rgba_to_grey_scalar(const u8 *src, size_t sstride, u8 *dst, size_t dstride, u32 w, u32 h, u8 mask, bool ggg,
 			     bool bgr);
-void epd_gamma(u8 *buf, size_t stride, u32 w, u32 h, const u8 *lut);
+void epd_gamma(u8 *buf, size_t stride, u32 w, u32 h, const u8 *lut, u8 mask);
 void epd_dither_y1(u8 *buf, u32 w, u32 h, size_t stride, int *err, int pix_level, bool grey_white);
 void epd_dither_y4(u8 *buf, u32 w, u32 h, size_t stride, int *err);
 void epd_dither_y5(u8 *buf, u32 w, u32 h, size_t stride, int *err);

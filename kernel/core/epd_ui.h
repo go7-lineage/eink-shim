@@ -43,5 +43,6 @@ const char *epd_ui_mode_name(int mode);
 int epd_ui_frame(struct epd_ui *u, const struct epd_ui_cfg *cfg, const u8 *rgba, u32 pitch, size_t len,
 		 u64 now, struct epd_request *out, int *cut);
 enum epd_ui_step epd_ui_step(struct epd_ui *u, u64 now, struct epd_request *out, u64 *wait);
+void epd_ui_gc_request(struct epd_request *out, u32 w, u32 h);
 
 #endif

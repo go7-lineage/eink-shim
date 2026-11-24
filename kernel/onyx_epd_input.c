@@ -119,7 +119,7 @@ void epd_submit(struct onyx_epd *p, const struct epd_request *r, const u8 *rgba,
 	u32 y;
 
 	epd_convert_update(rgba, pitch, p->grey_in, EPD_W, r->left, r->top, r->width, r->height,
-			   r->flags | (y1_ordered ? EPD_CONV_Y1_ORDERED : 0), false, bgr, NULL, p->err);
+			   r->flags | (y1_ordered ? EPD_CONV_Y1_ORDERED : 0), false, bgr, p->gamma, p->err);
 	mutex_lock(&p->lock);
 	epd_policy_apply(&p->pol, r, &d);
 	for (y = r->top; y < (u32)r->top + r->height; y++)
@@ -193,6 +193,15 @@ put:
 out:
 	drm_dev_exit(idx);
 	return ret;
+}
+
+void epd_redraw(struct onyx_epd *p)
+{
+	struct epd_request r;
+
+	epd_ui_gc_request(&r, EPD_W, EPD_H);
+	pm_wakeup_ws_event(p->ws, 750, false);
+	epd_resend(p, &r);
 }
 
 static int ebc_open(struct inode *inode, struct file *f)

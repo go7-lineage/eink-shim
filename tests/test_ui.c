@@ -428,3 +428,19 @@ TEST(ui_reads_only_the_visible_width)
 	free(exact);
 	epd_ui_release(&r.ui);
 }
+
+TEST(ui_gc_request_is_a_full_gc16_without_a_marker)
+{
+	struct epd_request q;
+
+	memset(&q, 0x5a, sizeof(q));
+	epd_ui_gc_request(&q, W, H);
+	CHECK_EQ(q.left, 0);
+	CHECK_EQ(q.top, 0);
+	CHECK_EQ(q.width, W);
+	CHECK_EQ(q.height, H);
+	CHECK_EQ(q.mode, 2);
+	CHECK_EQ(q.flags, 0x1000);
+	CHECK_EQ(q.update_mode, 1);
+	CHECK_EQ(q.marker, 0);
+}

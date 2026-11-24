@@ -57,13 +57,26 @@ TEST(convert_gamma_maps_through_lut)
 
 	for (i = 0; i < 256; i++)
 		lut[i] = (u8)(255 - i);
-	epd_gamma(buf, 5, 4, 2, lut);
+	epd_gamma(buf, 5, 4, 2, lut, 0xff);
 	CHECK_EQ(buf[0], 255);
 	CHECK_EQ(buf[3], 252);
 	CHECK_EQ(buf[4], 99);
 	CHECK_EQ(buf[5], 0);
 	CHECK_EQ(buf[8], 3);
 	CHECK_EQ(buf[9], 99);
+}
+
+TEST(convert_gamma_masks_the_result)
+{
+	u8 lut[256], buf[3] = { 0, 0x2c, 0xff };
+	int i;
+
+	for (i = 0; i < 256; i++)
+		lut[i] = (u8)(255 - i);
+	epd_gamma(buf, 3, 3, 1, lut, 0xf0);
+	CHECK_EQ(buf[0], 0xf0);
+	CHECK_EQ(buf[1], 0xd0);
+	CHECK_EQ(buf[2], 0);
 }
 
 struct size {
@@ -334,8 +347,24 @@ TEST(convert_update_applies_gamma_then_dither)
 	randomize(rgba, sizeof(rgba), 6);
 	epd_convert_update(rgba, 16 * 4, grey, 16, 0, 0, 16, 8, 0x4000, false, true, lut, err);
 	epd_rgba_to_grey_scalar(rgba, 16 * 4, want, 16, 16, 8, 0xff, false, true);
-	epd_gamma(want, 16, 16, 8, lut);
+	epd_gamma(want, 16, 16, 8, lut, 0xff);
 	epd_dither_y4(want, 16, 8, 16, err2);
+	CHECK_MEM(grey, want, sizeof(grey));
+}
+
+TEST(convert_update_applies_gamma_before_quantizing)
+{
+	static u8 rgba[8 * 16 * 4], grey[8 * 16], want[8 * 16], lut[256];
+	static int err[3 * 16 + 12];
+	size_t i;
+
+	for (i = 0; i < 256; i++)
+		lut[i] = (u8)(255 - i);
+	randomize(rgba, sizeof(rgba), 9);
+	epd_convert_update(rgba, 16 * 4, grey, 16, 0, 0, 16, 8, 0x1000, false, false, lut, err);
+	epd_rgba_to_grey_scalar(rgba, 16 * 4, want, 16, 16, 8, 0xff, false, false);
+	for (i = 0; i < sizeof(want); i++)
+		want[i] = lut[want[i]] & 0xf0;
 	CHECK_MEM(grey, want, sizeof(grey));
 }
 

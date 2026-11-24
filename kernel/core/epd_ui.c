@@ -258,6 +258,11 @@ static void ui_upd(struct epd_request *r, u32 x, u32 y, u32 w, u32 h, int wf, u3
 	r->flags = flag;
 }
 
+void epd_ui_gc_request(struct epd_request *out, u32 w, u32 h)
+{
+	ui_upd(out, 0, 0, w, h, UI_GC_WF, UI_GC_FLAG, true, 0);
+}
+
 int epd_ui_frame(struct epd_ui *u, const struct epd_ui_cfg *cfg, const u8 *rgba, u32 pitch, size_t len,
 		 u64 now, struct epd_request *out, int *cut)
 {

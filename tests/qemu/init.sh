@@ -70,6 +70,53 @@ echo speed > $S/ui_mode
 echo 300 > $S/cut_frame_num 2>/dev/null && fail "cut 300 accepted"
 echo 2 > $S/cut_frame_num && [ "$(cat $S/cut_frame_num)" = 2 ] || fail "cut 2"
 
+idle() {
+	wait_for 'settled && grep -q "link 0," $S/status' 30 || fail "not idle: $(tail -1 $S/status)"
+}
+quiet() {
+	idle
+	f0=$(fval frames)
+	sleep 2
+	wait_for settled 30
+	[ "$(fval frames)" = "$f0" ] || fail "$1 redrew: frames $f0 -> $(fval frames)"
+}
+redraws() {
+	idle
+	f0=$(fval frames)
+	echo "$2" > $S/$1 || fail "$1 $2"
+	wait_for '[ "$(fval frames)" -gt "$f0" ] && settled' 30 || fail "$1 $2 did not redraw: $(tail -1 $S/status)"
+}
+[ "$(cat $S/ui_gamma)" = 0 ] || fail "ui_gamma default $(cat $S/ui_gamma)"
+[ "$(cat $S/ui_levels)" = "0 100 255" ] || fail "ui_levels default $(cat $S/ui_levels)"
+for v in "0 100 127" "128 100 255" "0 24 255" "0 401 255" "0 100" "x"; do
+	echo "$v" > $S/ui_levels 2>/dev/null && fail "ui_levels $v accepted"
+done
+echo 2 > $S/ui_gamma 2>/dev/null && fail "ui_gamma 2 accepted"
+[ "$(cat $S/ui_levels)" = "0 100 255" ] || fail "ui_levels changed by a bad write: $(cat $S/ui_levels)"
+echo "16 140 240" > $S/ui_levels && echo 1 > $S/ui_gamma || fail "gamma without a framebuffer"
+quiet "gamma without a framebuffer"
+echo 0 > $S/ui_gamma
+idle
+f0=$(fval frames)
+kmsfill & kms=$!
+wait_for '[ "$(fval frames)" -gt "$f0" ] && settled' 30 || fail "kmsfill frame not shown: $(fake)"
+quiet "a still framebuffer"
+redraws ui_gamma 1
+[ "$(cat $S/ui_gamma)" = 1 ] && [ "$(cat $S/ui_levels)" = "16 140 240" ] || fail "gamma read back"
+echo 1 > $S/ui_gamma
+quiet "an unchanged ui_gamma"
+echo "16 140 240" > $S/ui_levels
+quiet "unchanged ui_levels"
+redraws ui_levels "16 150 240"
+redraws ui_levels "0 100 255"
+redraws ui_levels "0 60 255"
+redraws ui_gamma 0
+echo "0 100 255" > $S/ui_levels
+quiet "ui_levels while gamma is off"
+kill $kms
+wait $kms
+log "gamma: $(fake)"
+
 i=0
 for m in 2 4 1 5 2 16 15 14 2 4 4 1 2 5 2 3 2; do
 	set -- white black stripes checker diagonal

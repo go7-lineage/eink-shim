@@ -21,13 +21,13 @@ void epd_rgba_to_grey_scalar(const u8 *src, size_t sstride, u8 *dst, size_t dstr
 }
 
 /* onyx_gamma_correction */
-void epd_gamma(u8 *buf, size_t stride, u32 w, u32 h, const u8 *lut)
+void epd_gamma(u8 *buf, size_t stride, u32 w, u32 h, const u8 *lut, u8 mask)
 {
 	u32 x, y;
 
 	for (y = 0; y < h; y++, buf += stride)
 		for (x = 0; x < w; x++)
-			buf[x] = lut[buf[x]];
+			buf[x] = lut[buf[x]] & mask;
 }
 
 #define ERR(row, x)	err[((row) % 3) * (w + 3) + (x) + 1]
@@ -260,18 +260,19 @@ void epd_convert_update(const u8 *rgba, size_t rgba_stride, u8 *grey, size_t gre
 {
 	EPD_SIMD_STATE;
 	u8 mask = flags & EPD_DITHER_FLAGS ? 0xff : 0xf0;
+	u8 conv_mask = gamma ? 0xff : mask;
 	const u8 *src = rgba + top * rgba_stride + 4 * (size_t)left;
 	u8 *dst = grey + top * grey_stride + left;
 
 #ifdef EPD_NEON
 	epd_simd_begin();
-	epd_rgba_to_grey_neon(src, rgba_stride, dst, grey_stride, w, h, mask, ggg, bgr);
+	epd_rgba_to_grey_neon(src, rgba_stride, dst, grey_stride, w, h, conv_mask, ggg, bgr);
 	epd_simd_end();
 #else
-	epd_rgba_to_grey_scalar(src, rgba_stride, dst, grey_stride, w, h, mask, ggg, bgr);
+	epd_rgba_to_grey_scalar(src, rgba_stride, dst, grey_stride, w, h, conv_mask, ggg, bgr);
 #endif
 	if (gamma)
-		epd_gamma(dst, grey_stride, w, h, gamma);
+		epd_gamma(dst, grey_stride, w, h, gamma, mask);
 	if ((flags & (EPD_CONV_Y1_ORDERED | 0x2000)) == (EPD_CONV_Y1_ORDERED | 0x2000)) {
 #ifdef EPD_NEON
 		epd_simd_begin();

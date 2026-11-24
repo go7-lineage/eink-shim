@@ -4,12 +4,12 @@ BUILD ?= build
 
 CORE_DIR := kernel/core
 CORE := $(addprefix $(CORE_DIR)/,epd_wbf.c epd_tables.c epd_frame.c epd_engine.c epd_convert.c epd_policy.c \
-	epd_ui.c epd_pattern.c epd_bootargs.c epd_ring.c)
+	epd_ui.c epd_pattern.c epd_bootargs.c epd_ring.c epd_gamma.c)
 NEON := $(CORE_DIR)/epd_neon.c
 FUZZ_SRC := tests/fuzz_wbf.c tests/fixture.c tests/wbf_build.c
 TEST_SRC := $(filter-out tests/fuzz_%.c,$(wildcard tests/*.c))
 HEADERS := $(wildcard $(CORE_DIR)/*.h tests/*.h)
-LINT_SRC := $(CORE) $(NEON) $(wildcard tests/*.c) tests/qemu/mkwbf.c
+LINT_SRC := $(CORE) $(NEON) $(wildcard tests/*.c) tests/qemu/mkwbf.c tests/qemu/kmsfill.c
 
 CFLAGS ?= -O1 -g
 WARN := -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion -Wcast-qual -Wcast-align \
@@ -51,11 +51,11 @@ $(addprefix test-,$(VARIANTS)): test-%: $(BUILD)/test-%
 
 $(BUILD)/test-scalar: $(CORE) $(TEST_SRC) $(HEADERS)
 	@mkdir -p $(BUILD)
-	$(CC) $(ALL_CFLAGS) -o $@ $(CORE) $(TEST_SRC)
+	$(CC) $(ALL_CFLAGS) -o $@ $(CORE) $(TEST_SRC) -lm
 
 $(BUILD)/test-neon: $(CORE) $(NEON) $(TEST_SRC) $(HEADERS)
 	@mkdir -p $(BUILD)
-	$(CC) $(ALL_CFLAGS) -DEPD_NEON -o $@ $(CORE) $(NEON) $(TEST_SRC)
+	$(CC) $(ALL_CFLAGS) -DEPD_NEON -o $@ $(CORE) $(NEON) $(TEST_SRC) -lm
 
 lint:
 	$(CLANG_TIDY) --quiet $(LINT_SRC) -- -std=gnu11 $(NEON_DEF) $(INC)

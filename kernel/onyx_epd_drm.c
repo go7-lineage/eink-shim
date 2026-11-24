@@ -321,6 +321,7 @@ static int onyx_epd_probe(struct platform_device *pdev)
 	INIT_DELAYED_WORK(&p->setup, epd_setup_work);
 	INIT_DELAYED_WORK(&p->ui_work, epd_ui_work);
 	p->ui_cfg = (struct epd_ui_cfg){ .mode = EPD_UI_SPEED, .gc_interval = 20, .big_pct = 50, .a2cut = 3 };
+	p->levels = (struct epd_levels)EPD_LEVELS_IDENTITY;
 	p->cut = 3;
 	epd_policy_init(&p->pol, true);
 	epd_queue_init(&p->q);
