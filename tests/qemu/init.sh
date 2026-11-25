@@ -75,12 +75,18 @@ echo 2 > $S/cut_frame_num && [ "$(cat $S/cut_frame_num)" = 2 ] || fail "cut 2"
 idle() {
 	wait_for 'settled && grep -q "link 0," $S/status' 30 || fail "not idle: $(tail -1 $S/status)"
 }
+frames() { fval frames; }
+dframes() { sed -n '1s/.*frames \([0-9]*\),.*/\1/p' $S/status; }
+held() {
+	sleep 2
+	wait_for settled 30
+	now=$($1)
+	[ -n "$2" ] && [ "$now" = "$2" ] || fail "$3: $1 '$2' -> '$now'"
+}
 quiet() {
 	idle
 	f0=$(fval frames)
-	sleep 2
-	wait_for settled 30
-	[ "$(fval frames)" = "$f0" ] || fail "$1 redrew: frames $f0 -> $(fval frames)"
+	held frames "$f0" "$1 redrew"
 }
 redraws() {
 	idle
@@ -121,6 +127,69 @@ grep "^ui " $S/status | grep -q "flashes 1 (dropped 0)" || fail "ui_flash count:
 kill $kms
 wait $kms
 log "gamma: $(fake)"
+hwc_start() {
+	rm -f /hwc /hwc.log
+	mkfifo /hwc
+	hwcseq < /hwc > /hwc.log 2>&1 &
+	hwc_pid=$!
+	exec 3> /hwc
+	hn=0
+}
+hwc() {
+	hn=$((hn + 1))
+	echo "$*" >&3
+	wait_for "grep -q '^hwcseq: $hn ' /hwc.log" 10 || { fail "hwcseq '$*' did not answer"; return 2; }
+	grep -q "^hwcseq: $hn ok\$" /hwc.log
+}
+hwc_stop() {
+	exec 3>&-
+	wait $hwc_pid
+}
+sleepval() { sed -n "/^sleep/s/.*$1 \([0-9]*\).*/\1/p" $S/status; }
+still() { held frames "$f0" "$1"; }
+unchanged() { held dframes "$d0" "$1"; }
+drawn() {
+	wait_for '[ "$(fval frames)" -gt "$f0" ] && settled' 30 || fail "$1 not drawn: $(tail -1 $S/status)"
+}
+composer_cycle() {
+	idle
+	hwc_start
+	f0=$(fval frames)
+	hwc off || fail "teardown of a CRTC without a plane: $(tail -1 /hwc.log)"
+	still "power-off"
+	k0=$(sleepval "modesets skipped")
+	hwc on || fail "modeset: $(tail -1 /hwc.log)"
+	hwc ebc && fail "/dev/ebc drew the composer's modeset buffer"
+	still "the composer's modeset buffer"
+	hwc "frame 64" || fail "frame: $(tail -1 /hwc.log)"
+	drawn "the first composer frame"
+	idle
+	d0=$(dframes)
+	hwc "frame 64" || fail "repeated frame: $(tail -1 /hwc.log)"
+	unchanged "an unchanged frame"
+	hwc ebc || fail "/dev/ebc while on: $(tail -1 /hwc.log)"
+	drawn "a /dev/ebc refresh"
+	idle
+	f0=$(fval frames)
+	hwc off || fail "the composer's power-off commit: $(tail -1 /hwc.log)"
+	hwc ebc && fail "/dev/ebc accepted while off"
+	still "power-off and /dev/ebc while off"
+	hwc on || fail "wake modeset: $(tail -1 /hwc.log)"
+	hwc ebc && fail "/dev/ebc drew the wake modeset buffer"
+	still "the wake modeset buffer"
+	hwc "frame 192" || fail "frame after wake: $(tail -1 /hwc.log)"
+	drawn "the frame after wake"
+	idle
+	d0=$(dframes)
+	hwc "frame 192" || fail "repeated frame after wake: $(tail -1 /hwc.log)"
+	unchanged "an unchanged frame after wake"
+	[ "$(sleepval "modesets skipped")" = $((k0 + 2)) ] ||
+		fail "modesets skipped $k0 -> $(sleepval "modesets skipped")"
+	hwc_stop
+	idle
+	log "composer cycle: $(grep '^sleep' $S/status)"
+}
+composer_cycle
 
 i=0
 for m in 2 4 1 5 2 16 15 14 2 4 4 1 2 5 2 3 2; do

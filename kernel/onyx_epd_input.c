@@ -183,7 +183,9 @@ static int epd_resend(struct onyx_epd *p, const struct epd_request *r, int n)
 	ret = drm_gem_fb_begin_cpu_access(fb, DMA_FROM_DEVICE);
 	if (!ret) {
 		mutex_lock(&p->in_lock);
-		if (n) {
+		if (!epd_sleep_can_resend(&p->sleep)) {
+			ret = -EAGAIN;
+		} else if (n) {
 			const u8 *fast = epd_fb_cached(p, fb);
 
 			epd_submit(p, r, n, fast ? fast : data[0].vaddr, fb->pitches[0], epd_fb_bgr(fb));

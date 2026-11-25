@@ -11,31 +11,7 @@
 #include <drm/drm_fourcc.h>
 #include <drm/drm_mode.h>
 
-static int open_card(const char *want)
-{
-	char path[32], name[32];
-	int i, fd;
-
-	for (i = 0; i < 8; i++) {
-		struct drm_version v = { .name = name, .name_len = sizeof(name) - 1 };
-
-		(void)snprintf(path, sizeof(path), "/dev/dri/card%d", i);
-		fd = open(path, O_RDWR | O_CLOEXEC);
-		if (fd < 0)
-			continue;
-		memset(name, 0, sizeof(name));
-		if (!ioctl(fd, DRM_IOCTL_VERSION, &v) && !strcmp(name, want))
-			return fd;
-		close(fd);
-	}
-	return -1;
-}
-
-static int fail(const char *what)
-{
-	perror(what);
-	return 1;
-}
+#include "kms_card.h"
 
 int main(void)
 {
@@ -51,6 +27,7 @@ int main(void)
 	struct drm_mode_fb_cmd2 fb = { .pixel_format = DRM_FORMAT_XRGB8888 };
 	struct drm_mode_map_dumb md = { 0 };
 	struct drm_mode_crtc sc = { 0 };
+	struct drm_mode_fb_dirty_cmd dirty = { 0 };
 	uint32_t *px;
 	int fd = open_card("onyx-epd");
 
@@ -98,6 +75,9 @@ int main(void)
 	sc.mode_valid = 1;
 	if (ioctl(fd, DRM_IOCTL_MODE_SETCRTC, &sc))
 		return fail("SETCRTC");
+	dirty.fb_id = fb.fb_id;
+	if (ioctl(fd, DRM_IOCTL_MODE_DIRTYFB, &dirty))
+		return fail("DIRTYFB");
 	printf("kmsfill: showing a %ux%u grey ramp\n", cd.width, cd.height);
 	(void)fflush(stdout);
 	for (;;)

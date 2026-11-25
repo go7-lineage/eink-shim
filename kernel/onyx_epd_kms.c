@@ -124,7 +124,18 @@ static int epd_plane_atomic_check(struct drm_plane *plane, struct drm_atomic_sta
 	if (ps->crtc)
 		cs = drm_atomic_get_new_crtc_state(state, ps->crtc);
 	return drm_atomic_helper_check_plane_state(ps, cs, DRM_PLANE_NO_SCALING, DRM_PLANE_NO_SCALING,
-						   false, false);
+						   false, true);
+}
+
+static bool epd_crtc_turning_on(struct drm_atomic_state *state, struct drm_crtc *crtc)
+{
+	struct drm_crtc_state *old_cs, *new_cs;
+
+	if (!crtc)
+		return false;
+	old_cs = drm_atomic_get_old_crtc_state(state, crtc);
+	new_cs = drm_atomic_get_new_crtc_state(state, crtc);
+	return old_cs && new_cs && new_cs->active && !old_cs->active;
 }
 
 static void epd_plane_atomic_update(struct drm_plane *plane, struct drm_atomic_state *state)
@@ -134,6 +145,8 @@ static void epd_plane_atomic_update(struct drm_plane *plane, struct drm_atomic_s
 	struct drm_plane_state *old = drm_atomic_get_old_plane_state(state, plane);
 	struct onyx_plane_state *s = to_onyx_plane_state(ps);
 	struct drm_framebuffer *fb = ps->fb;
+	enum epd_sleep_action sf;
+	bool turning_on;
 	const u8 *vaddr, *fast;
 	int idx;
 
@@ -142,8 +155,13 @@ static void epd_plane_atomic_update(struct drm_plane *plane, struct drm_atomic_s
 	if (!drm_dev_enter(plane->dev, &idx))
 		goto out;
 	vaddr = s->base.data[0].vaddr;
-	epd_link_hint(p);
+	turning_on = epd_crtc_turning_on(state, ps->crtc);
+	if (!turning_on)
+		epd_link_hint(p);
 	mutex_lock(&p->in_lock);
+	sf = epd_sleep_frame(&p->sleep, turning_on);
+	if (sf == EPD_SLEEP_SKIP)
+		goto unlock;
 	fast = epd_fb_cached(p, fb);
 	if (fast) {
 		vaddr = fast;
@@ -194,6 +212,7 @@ static void epd_plane_atomic_update(struct drm_plane *plane, struct drm_atomic_s
 			epd_request(p, &u, vaddr, fb->pitches[0], epd_fb_bgr(fb));
 		}
 	}
+unlock:
 	mutex_unlock(&p->in_lock);
 	wake_up(&p->wq);
 	drm_dev_exit(idx);

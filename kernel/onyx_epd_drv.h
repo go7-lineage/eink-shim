@@ -21,6 +21,7 @@
 #include "core/epd_gamma.h"
 #include "core/epd_policy.h"
 #include "core/epd_ring.h"
+#include "core/epd_sleep.h"
 #include "core/epd_ui.h"
 
 struct onyx_epdc_upd;
@@ -73,6 +74,7 @@ struct onyx_epd {
 	struct delayed_work ui_work;
 	u64 ui_frames, ui_updates, ui_passes, ui_rects, ui_cached;
 	u32 ui_us_last, ui_us_max;
+	struct epd_sleep sleep;
 
 	struct epd_stat { u32 last, max; u64 sum, n; } st_tick, st_copy, st_commit, st_link, st_power, st_first;
 	u64 t_start;

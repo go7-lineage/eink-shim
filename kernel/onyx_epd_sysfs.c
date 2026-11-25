@@ -45,6 +45,7 @@ static ssize_t status_show(struct device *dev, struct device_attribute *attr, ch
 	struct onyx_epd *p = dev_get_drvdata(dev);
 	struct epd_ring ring;
 	bool busy;
+	u64 skipped;
 	int n, queued;
 	u32 flashes, flash_drops;
 
@@ -80,6 +81,10 @@ static ssize_t status_show(struct device *dev, struct device_attribute *attr, ch
 	n += sysfs_emit_at(buf, n, "engine busy %d, queued %d, link %d, ", busy, queued, READ_ONCE(p->link_on));
 	n += sysfs_emit_at(buf, n, "buffers shown %d inflight %d pending %d filling %d, link request %d\n",
 			   ring.shown, ring.inflight, ring.pending, ring.filling, ring.link_req);
+	mutex_lock(&p->in_lock);
+	skipped = p->sleep.n_skipped;
+	mutex_unlock(&p->in_lock);
+	n += sysfs_emit_at(buf, n, "sleep: modesets skipped %llu\n", skipped);
 	return n;
 }
 static DEVICE_ATTR_RO(status);

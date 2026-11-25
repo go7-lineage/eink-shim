@@ -21,6 +21,7 @@ cc -std=gnu11 -O1 -I"$repo/kernel/core" -I"$repo/tests" -o "$T/mkwbf" "$here/mkw
 	"$repo/tests/fixture.c" "$repo/tests/wbf_build.c"
 mcc=$(nix build --no-link --print-out-paths nixpkgs#pkgsStatic.stdenv.cc | grep -v -- '-man$')
 "$mcc/bin/aarch64-unknown-linux-musl-gcc" -static -std=gnu11 -O1 -Wall -Wextra -Werror -o "$T/kmsfill" "$here/kmsfill.c"
+"$mcc/bin/aarch64-unknown-linux-musl-gcc" -static -std=gnu11 -O1 -Wall -Wextra -Werror -o "$T/hwcseq" "$here/hwcseq.c"
 
 $Q qemu-system-aarch64 "${M[@]}" -machine dumpdtb="$T/virt.dtb" > /dev/null 2>&1
 $Q dtc -q -I dtb -O dts "$T/virt.dtb" > "$T/test.dts"
@@ -35,6 +36,7 @@ cp "$bb" "$root/bin/busybox"
 for a in $("$bb" --list); do ln -sf busybox "$root/bin/$a"; done
 cp "$T"/mo/*.ko "$T"/mo-test/*.ko "$root/lib/modules/"
 cp "$T/kmsfill" "$root/bin/kmsfill"
+cp "$T/hwcseq" "$root/bin/hwcseq"
 "$T/mkwbf" "$root/lib/firmware/eink_waveform.wbf"
 cp "$here/init.sh" "$root/init"
 chmod +x "$root/init"
