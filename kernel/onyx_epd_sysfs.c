@@ -46,6 +46,7 @@ static ssize_t status_show(struct device *dev, struct device_attribute *attr, ch
 	struct epd_ring ring;
 	bool busy;
 	int n, queued;
+	u32 flashes, flash_drops;
 
 	mutex_lock(&p->lock);
 	busy = p->eng && epd_engine_busy(p->eng);
@@ -54,16 +55,21 @@ static ssize_t status_show(struct device *dev, struct device_attribute *attr, ch
 	spin_lock(&p->out_lock);
 	ring = p->ring;
 	spin_unlock(&p->out_lock);
+	mutex_lock(&p->in_lock);
+	flashes = p->ui.flashes;
+	flash_drops = p->ui.flash_drops;
+	mutex_unlock(&p->in_lock);
 
 	n = sysfs_emit(buf, "waveform %s, output %s, powered %d, frames %llu, swap_rg %d\n",
 		       p->eng ? "loaded" : "missing", epd_output_ready(p) ? "ready" : "waiting",
 		       p->powered, p->frames, epd_param_swap_rg);
 	n += epd_temp_emit(p, buf, n);
 	n += sysfs_emit_at(buf, n,
-			   "ui %s: commits %llu, updates %llu, passes %llu, rects %llu, diff %u us (max %u), cached %llu\n",
+			   "ui %s: commits %llu, updates %llu, passes %llu, rects %llu, diff %u us (max %u), cached %llu",
 			   !p->ui_ok ? "unavailable" : epd_param_ui ? epd_ui_mode_name(p->ui_cfg.mode) : "off",
 			   p->ui_frames, p->ui_updates, p->ui_passes, p->ui_rects, p->ui_us_last, p->ui_us_max,
 			   p->ui_cached);
+	n += sysfs_emit_at(buf, n, ", flashes %u (dropped %u)\n", flashes, flash_drops);
 	n += sysfs_emit_at(buf, n, "us last/avg/max (cpu %d):", p->tick_cpu);
 	n += epd_emit_stat(buf, n, "tick", &p->st_tick, ",");
 	n += epd_emit_stat(buf, n, "copy", &p->st_copy, ",");
@@ -221,6 +227,26 @@ static ssize_t test_pattern_store(struct device *dev, struct device_attribute *a
 }
 static DEVICE_ATTR_WO(test_pattern);
 
+static ssize_t ui_flash_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
+{
+	struct onyx_epd *p = dev_get_drvdata(dev);
+	unsigned int v;
+	int ret = kstrtouint(buf, 0, &v);
+
+	if (ret)
+		return ret;
+	if (v != 1)
+		return -EINVAL;
+	if (!p->ui_ok)
+		return -ENODEV;
+	mutex_lock(&p->in_lock);
+	epd_ui_flash(&p->ui, epd_now_ms());
+	mutex_unlock(&p->in_lock);
+	mod_delayed_work(system_unbound_wq, &p->ui_work, 0);
+	return count;
+}
+static DEVICE_ATTR_WO(ui_flash);
+
 static struct attribute *epd_attrs[] = {
 	&dev_attr_cut_frame_num.attr,
 	&dev_attr_test_pattern.attr,
@@ -231,6 +257,7 @@ static struct attribute *epd_attrs[] = {
 	&dev_attr_ui_a2cut.attr,
 	&dev_attr_ui_gamma.attr,
 	&dev_attr_ui_levels.attr,
+	&dev_attr_ui_flash.attr,
 	NULL
 };
 

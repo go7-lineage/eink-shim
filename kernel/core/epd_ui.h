@@ -35,6 +35,9 @@ struct epd_ui {
 	int settle_mode;
 	bool big_pending;
 	int marker;
+	bool flash_pending, have_flash;
+	u64 last_flash;
+	u32 flashes, flash_drops;
 };
 
 enum epd_ui_step { EPD_UI_IDLE, EPD_UI_WAIT, EPD_UI_SEND };
@@ -48,5 +51,6 @@ int epd_ui_frame(struct epd_ui *u, const struct epd_ui_cfg *cfg, const u8 *rgba,
 		 u64 now, struct epd_request *out, int *cut);
 enum epd_ui_step epd_ui_step(struct epd_ui *u, u64 now, struct epd_request *out, int *n, u64 *wait);
 void epd_ui_gc_request(struct epd_request *out, u32 w, u32 h);
+int epd_ui_flash(struct epd_ui *u, u64 now);
 
 #endif

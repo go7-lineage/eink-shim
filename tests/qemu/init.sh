@@ -115,6 +115,9 @@ redraws ui_levels "0 60 255"
 redraws ui_gamma 0
 echo "0 100 255" > $S/ui_levels
 quiet "ui_levels while gamma is off"
+echo 2 > $S/ui_flash 2>/dev/null && fail "ui_flash 2 accepted"
+redraws ui_flash 1
+grep "^ui " $S/status | grep -q "flashes 1 (dropped 0)" || fail "ui_flash count: $(grep "^ui " $S/status)"
 kill $kms
 wait $kms
 log "gamma: $(fake)"

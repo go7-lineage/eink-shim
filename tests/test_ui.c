@@ -628,3 +628,152 @@ TEST(ui_gc16_frame_clears_the_transient_rows)
 	EXPECT_REQ(&r, 16, 5, 8, 1, 5, 0x1000, 1);
 	epd_ui_release(&r.ui);
 }
+
+TEST(ui_flash_waits_for_quiet_frames)
+{
+	struct ui_rig r;
+	u64 wait = 0;
+
+	ui_rig_init(&r, EPD_UI_SPEED);
+	CHECK_EQ(frame(&r, 1000), 1);
+	CHECK_EQ(epd_ui_flash(&r.ui, 1010), 0);
+	CHECK_EQ(step(&r, 1010, &wait), EPD_UI_WAIT);
+	CHECK_EQ(wait, 140);
+	poke(&r, 0, 0);
+	CHECK_EQ(frame(&r, 1100), 1);
+	CHECK_EQ(step(&r, 1249, &wait), EPD_UI_WAIT);
+	CHECK_EQ(wait, 1);
+	CHECK_EQ(step(&r, 1250, &wait), EPD_UI_SEND);
+	EXPECT_REQ(&r, 0, 0, W, H, 2, 0x1000, 1);
+	CHECK_EQ(r.ui.flashes, 1);
+	CHECK_EQ(step(&r, 1251, &wait), EPD_UI_IDLE);
+	epd_ui_release(&r.ui);
+}
+
+TEST(ui_flash_without_a_frame_fires_at_once)
+{
+	struct ui_rig r;
+	u64 wait = 0;
+
+	ui_rig_init(&r, EPD_UI_SPEED);
+	CHECK_EQ(epd_ui_flash(&r.ui, 0), 0);
+	CHECK_EQ(step(&r, 0, &wait), EPD_UI_SEND);
+	EXPECT_REQ(&r, 0, 0, W, H, 2, 0x1000, 1);
+	epd_ui_release(&r.ui);
+}
+
+TEST(ui_flash_absorbs_repeats_and_drops_early_requests)
+{
+	struct ui_rig r;
+	u64 wait = 0;
+
+	ui_rig_init(&r, EPD_UI_SPEED);
+	CHECK_EQ(frame(&r, 0), 1);
+	CHECK_EQ(epd_ui_flash(&r.ui, 1000), 0);
+	CHECK_EQ(epd_ui_flash(&r.ui, 1001), 0);
+	CHECK_EQ(step(&r, 1001, &wait), EPD_UI_SEND);
+	CHECK_EQ(step(&r, 1002, &wait), EPD_UI_IDLE);
+	CHECK_EQ(epd_ui_flash(&r.ui, 1500), -EBUSY);
+	CHECK_EQ(r.ui.flash_drops, 1);
+	CHECK_EQ(step(&r, 1500, &wait), EPD_UI_IDLE);
+	CHECK_EQ(epd_ui_flash(&r.ui, 1501), 0);
+	CHECK_EQ(step(&r, 1501, &wait), EPD_UI_SEND);
+	CHECK_EQ(r.ui.flashes, 2);
+	CHECK_EQ(r.ui.flash_drops, 1);
+	epd_ui_release(&r.ui);
+}
+
+TEST(ui_flash_replaces_a_pending_big_burst)
+{
+	struct ui_rig r;
+	u64 wait = 0;
+
+	ui_rig_init(&r, EPD_UI_SPEED);
+	r.cfg.big_pct = 50;
+	CHECK_EQ(frame(&r, 0), 1);
+	CHECK_EQ(epd_ui_flash(&r.ui, 100), 0);
+	CHECK_EQ(step(&r, 149, &wait), EPD_UI_WAIT);
+	CHECK_EQ(wait, 1);
+	CHECK_EQ(step(&r, 150, &wait), EPD_UI_SEND);
+	EXPECT_REQ(&r, 0, 0, W, H, 2, 0x1000, 1);
+	CHECK_EQ(step(&r, 5000, &wait), EPD_UI_IDLE);
+	epd_ui_release(&r.ui);
+}
+
+TEST(ui_flash_starts_a_new_burst)
+{
+	struct ui_rig r;
+	u64 wait = 0;
+
+	ui_rig_init(&r, EPD_UI_SPEED);
+	r.cfg.big_pct = 50;
+	CHECK_EQ(frame(&r, 0), 1);
+	CHECK_EQ(epd_ui_flash(&r.ui, 150), 0);
+	CHECK_EQ(step(&r, 150, &wait), EPD_UI_SEND);
+	poke(&r, 0, 0);
+	CHECK_EQ(frame(&r, 300), 1);
+	CHECK_EQ(step(&r, 5000, &wait), EPD_UI_IDLE);
+	epd_ui_release(&r.ui);
+}
+
+TEST(ui_frame_gc16_serves_a_pending_flash)
+{
+	struct ui_rig r;
+	u64 wait = 0;
+
+	ui_rig_init(&r, EPD_UI_SPEED);
+	CHECK_EQ(frame(&r, 0), 1);
+	CHECK_EQ(epd_ui_flash(&r.ui, 50), 0);
+	r.cfg.mode = EPD_UI_REGAL;
+	poke(&r, 0, 0);
+	CHECK_EQ(frame(&r, 100), 1);
+	EXPECT_REQ(&r, 0, 0, W, H, 2, 0x1000, 1);
+	CHECK_EQ(r.ui.flashes, 1);
+	CHECK_EQ(step(&r, 5000, &wait), EPD_UI_IDLE);
+	CHECK_EQ(epd_ui_flash(&r.ui, 599), -EBUSY);
+	epd_ui_release(&r.ui);
+}
+
+TEST(ui_flash_restarts_the_gc_interval)
+{
+	struct ui_rig r;
+	u64 wait = 0;
+
+	ui_rig_init(&r, EPD_UI_SPEED);
+	r.cfg.gc_interval = 2;
+	CHECK_EQ(frame(&r, 0), 1);
+	poke(&r, 0, 0);
+	CHECK_EQ(frame(&r, 1000), 1);
+	EXPECT_REQ(&r, 0, 0, 8, 1, 4, 0x2000, 0);
+	CHECK_EQ(epd_ui_flash(&r.ui, 1000), 0);
+	CHECK_EQ(step(&r, 1150, &wait), EPD_UI_SEND);
+	poke(&r, 0, 0);
+	CHECK_EQ(frame(&r, 2000), 1);
+	EXPECT_REQ(&r, 0, 0, 8, 1, 4, 0x2000, 0);
+	poke(&r, 0, 0);
+	CHECK_EQ(frame(&r, 3000), 1);
+	EXPECT_REQ(&r, 0, 0, 8, 1, 4, 0x2000, 0);
+	poke(&r, 0, 0);
+	CHECK_EQ(frame(&r, 4000), 1);
+	EXPECT_REQ(&r, 0, 0, W, H, 2, 0x1000, 1);
+	epd_ui_release(&r.ui);
+}
+
+TEST(ui_flash_replaces_a_pending_settle_pass)
+{
+	struct ui_rig r;
+	u64 wait = 0;
+
+	ui_rig_init(&r, EPD_UI_NORMAL);
+	CHECK_EQ(frame(&r, 0), 1);
+	poke(&r, 9, 1);
+	CHECK_EQ(frame(&r, 99), 1);
+	EXPECT_REQ(&r, 8, 1, 8, 1, 4, 0x2000, 0);
+	CHECK_EQ(epd_ui_flash(&r.ui, 99), 0);
+	CHECK_EQ(step(&r, 248, &wait), EPD_UI_WAIT);
+	CHECK_EQ(wait, 1);
+	CHECK_EQ(step(&r, 249, &wait), EPD_UI_SEND);
+	EXPECT_REQ(&r, 0, 0, W, H, 2, 0x1000, 1);
+	CHECK_EQ(step(&r, 5000, &wait), EPD_UI_IDLE);
+	epd_ui_release(&r.ui);
+}

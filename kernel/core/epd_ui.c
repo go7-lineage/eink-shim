@@ -14,6 +14,8 @@
 #define UI_INTERACTION_MS	500
 /* bursts longer than this never get GC16 */
 #define UI_BIG_MAX_FRAMES	10
+#define UI_FLASH_MIN_MS		500
+#define UI_FLASH_QUIET_MS	150
 
 #define UI_STOCK_TEMP		20
 
@@ -337,6 +339,28 @@ void epd_ui_gc_request(struct epd_request *out, u32 w, u32 h)
 	ui_upd(out, 0, 0, w, h, UI_GC_WF, UI_GC_FLAG, true, 0);
 }
 
+static void ui_flash_done(struct epd_ui *u, u64 now)
+{
+	u->flash_pending = false;
+	u->have_flash = true;
+	u->last_flash = now;
+	if (u->flashes < 0xffffffffu)
+		u->flashes++;
+}
+
+int epd_ui_flash(struct epd_ui *u, u64 now)
+{
+	if (u->flash_pending)
+		return 0;
+	if (u->have_flash && now < u->last_flash + UI_FLASH_MIN_MS) {
+		if (u->flash_drops < 0xffffffffu)
+			u->flash_drops++;
+		return -EBUSY;
+	}
+	u->flash_pending = true;
+	return 0;
+}
+
 static int ui_send(const struct epd_ui *u, const struct epd_ui_span *a, const struct epd_ui_span *b, int wf,
 		   u32 flag, bool full, int marker, struct epd_request *out)
 {
@@ -373,6 +397,8 @@ int epd_ui_frame(struct epd_ui *u, const struct epd_ui_cfg *cfg, const u8 *rgba,
 	if (d.kind == UI_GC16) {
 		u->settle_mode = -1;
 		u->big_pending = false;
+		if (u->flash_pending)
+			ui_flash_done(u, now);
 		ui_burst_reset(u);
 		if (tracked)
 			ui_burst_merge(u);
@@ -398,12 +424,19 @@ int epd_ui_frame(struct epd_ui *u, const struct epd_ui_cfg *cfg, const u8 *rgba,
 enum epd_ui_step epd_ui_step(struct epd_ui *u, u64 now, struct epd_request *out, int *n, u64 *wait)
 {
 	const struct epd_ui_span *a, *b;
+	bool flash = u->flash_pending;
 	int wf;
 	u32 flag;
 	u64 quiet;
 
 	*n = 0;
-	if (u->big_pending) {
+	if (flash) {
+		wf = UI_GC_WF;
+		flag = UI_GC_FLAG;
+		quiet = UI_FLASH_QUIET_MS;
+		a = NULL;
+		b = NULL;
+	} else if (u->big_pending) {
 		wf = UI_GC_WF;
 		flag = UI_GC_FLAG;
 		quiet = UI_BIG_QUIET_MS;
@@ -422,9 +455,14 @@ enum epd_ui_step epd_ui_step(struct epd_ui *u, u64 now, struct epd_request *out,
 		*wait = u->last_frame + quiet - now;
 		return EPD_UI_WAIT;
 	}
+	if (flash) {
+		ui_flash_done(u, now);
+		u->settled = 0;
+		ui_burst_reset(u);
+	}
 	u->settle_mode = -1;
 	u->big_pending = false;
-	if (u->untracked) {
+	if (flash || u->untracked) {
 		ui_upd(out, 0, 0, u->w, u->h, wf, flag, true, ui_marker(u));
 		*n = 1;
 	} else {
