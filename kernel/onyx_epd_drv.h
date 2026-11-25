@@ -31,6 +31,7 @@ struct onyx_epdc_upd;
 #define EPD_NBUF	EPD_RING_BUFS
 
 #define EPD_NMAP	4
+#define EPD_WAKE_MS	750
 #define EPD_MAP_PAGES	4096
 
 struct epd_fbmap {
@@ -54,6 +55,7 @@ struct onyx_epd {
 	struct mutex in_lock;
 	struct epd_engine *eng;
 	const struct firmware *fw;
+	const struct firmware *sleep_fw;
 	struct epd_policy pol;
 	struct epd_queue q;
 	u8 *grey;
@@ -160,6 +162,7 @@ int epd_out_thread(void *data);
 const u8 *epd_fb_cached(struct onyx_epd *p, struct drm_framebuffer *fb);
 void epd_fbmap_free(void *data);
 void epd_submit(struct onyx_epd *p, const struct epd_request *r, int n, const u8 *rgba, u32 pitch, bool bgr);
+void epd_submit_grey(struct onyx_epd *p, const struct epd_request *r, const u8 *grey);
 void epd_request(struct onyx_epd *p, const struct onyx_epdc_upd *u, const u8 *rgba, u32 pitch, bool bgr);
 void epd_redraw(struct onyx_epd *p);
 void epd_ui_work(struct work_struct *work);

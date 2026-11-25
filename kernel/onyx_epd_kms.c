@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
+#include <linux/device.h>
+#include <linux/firmware.h>
 #include <linux/module.h>
+#include <linux/pm_wakeup.h>
 
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
@@ -167,7 +170,14 @@ static void epd_plane_atomic_update(struct drm_plane *plane, struct drm_atomic_s
 		vaddr = fast;
 		p->ui_cached++;
 	}
-	if (s->updates) {
+	if (sf == EPD_SLEEP_FULL) {
+		struct epd_request r;
+
+		epd_ui_gc_request(&r, EPD_W, EPD_H);
+		epd_submit(p, &r, 1, vaddr, fb->pitches[0], epd_fb_bgr(fb));
+		if (p->ui_ok && fb->format->cpp[0] == 4)
+			epd_ui_seed(&p->ui, vaddr, fb->pitches[0], fb->obj[0]->size - fb->offsets[0], epd_now_ms());
+	} else if (s->updates) {
 		const struct onyx_epdc_upd *u = s->updates->data;
 		size_t i, n = min_t(size_t, s->updates->length / sizeof(*u), 8);
 
@@ -238,9 +248,30 @@ static void epd_crtc_atomic_flush(struct drm_crtc *crtc, struct drm_atomic_state
 	}
 }
 
+static void epd_crtc_atomic_disable(struct drm_crtc *crtc, struct drm_atomic_state *state)
+{
+	struct onyx_epd *p = to_epd(crtc->dev);
+	struct epd_request r;
+	int idx;
+
+	if (!drm_dev_enter(crtc->dev, &idx))
+		return;
+	mutex_lock(&p->in_lock);
+	if (epd_sleep_off(&p->sleep)) {
+		epd_ui_gc_request(&r, EPD_W, EPD_H);
+		pm_wakeup_ws_event(p->ws, EPD_WAKE_MS, false);
+		epd_link_hint(p);
+		epd_submit_grey(p, &r, p->sleep_fw->data);
+	}
+	mutex_unlock(&p->in_lock);
+	wake_up(&p->wq);
+	drm_dev_exit(idx);
+}
+
 static const struct drm_crtc_helper_funcs epd_crtc_helper_funcs = {
 	.atomic_check = drm_crtc_helper_atomic_check,
 	.atomic_flush = epd_crtc_atomic_flush,
+	.atomic_disable = epd_crtc_atomic_disable,
 };
 
 static const struct drm_crtc_funcs epd_crtc_funcs = {

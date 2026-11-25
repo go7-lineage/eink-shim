@@ -43,6 +43,7 @@ pattern() {
 log "start"
 load
 log "loaded: $(fake)"
+grep -q "^sleep image loaded" $S/status || fail "sleep image: $(grep '^sleep' $S/status)"
 grep -q "usercode" /sys/bus/i2c/devices/*-003c/chipid || fail "tcon chipid"
 wait_for 'grep -q "temperature 24000 mC from temp_c (qcom_qg: -19), waveform range 20-30 C" $S/status' 5 ||
 	fail "temperature: $(grep temperature $S/status)"
@@ -94,6 +95,12 @@ redraws() {
 	echo "$2" > $S/$1 || fail "$1 $2"
 	wait_for '[ "$(fval frames)" -gt "$f0" ] && settled' 30 || fail "$1 $2 did not redraw: $(tail -1 $S/status)"
 }
+sleepval() { sed -n "/^sleep/s/.*$1 \([0-9]*\).*/\1/p" $S/status; }
+still() { held frames "$f0" "$1"; }
+unchanged() { held dframes "$d0" "$1"; }
+drawn() {
+	wait_for '[ "$(fval frames)" -gt "$f0" ] && settled' 30 || fail "$1 not drawn: $(tail -1 $S/status)"
+}
 [ "$(cat $S/ui_gamma)" = 0 ] || fail "ui_gamma default $(cat $S/ui_gamma)"
 [ "$(cat $S/ui_levels)" = "0 100 255" ] || fail "ui_levels default $(cat $S/ui_levels)"
 for v in "0 100 127" "128 100 255" "0 24 255" "0 401 255" "0 100" "x"; do
@@ -124,8 +131,11 @@ quiet "ui_levels while gamma is off"
 echo 2 > $S/ui_flash 2>/dev/null && fail "ui_flash 2 accepted"
 redraws ui_flash 1
 grep "^ui " $S/status | grep -q "flashes 1 (dropped 0)" || fail "ui_flash count: $(grep "^ui " $S/status)"
+f0=$(fval frames)
 kill $kms
 wait $kms
+drawn "the sleep image after kmsfill exits"
+[ "$(sleepval shown)" = 1 ] || fail "sleep image shown $(sleepval shown) after kmsfill exits"
 log "gamma: $(fake)"
 hwc_start() {
 	rm -f /hwc /hwc.log
@@ -145,19 +155,18 @@ hwc_stop() {
 	exec 3>&-
 	wait $hwc_pid
 }
-sleepval() { sed -n "/^sleep/s/.*$1 \([0-9]*\).*/\1/p" $S/status; }
-still() { held frames "$f0" "$1"; }
-unchanged() { held dframes "$d0" "$1"; }
-drawn() {
-	wait_for '[ "$(fval frames)" -gt "$f0" ] && settled' 30 || fail "$1 not drawn: $(tail -1 $S/status)"
-}
 composer_cycle() {
+	if [ "$1" = loaded ]; then per=1; else per=0; fi
 	idle
 	hwc_start
+	s0=$(sleepval shown)
+	w0=$(sleepval "wake refreshes")
 	f0=$(fval frames)
 	hwc off || fail "teardown of a CRTC without a plane: $(tail -1 /hwc.log)"
-	still "power-off"
+	still "power-off of an off CRTC"
+	idle
 	k0=$(sleepval "modesets skipped")
+	f0=$(fval frames)
 	hwc on || fail "modeset: $(tail -1 /hwc.log)"
 	hwc ebc && fail "/dev/ebc drew the composer's modeset buffer"
 	still "the composer's modeset buffer"
@@ -172,8 +181,11 @@ composer_cycle() {
 	idle
 	f0=$(fval frames)
 	hwc off || fail "the composer's power-off commit: $(tail -1 /hwc.log)"
+	if [ $per = 1 ]; then drawn "the sleep image"; else still "power-off without a sleep image"; fi
+	idle
+	f0=$(fval frames)
 	hwc ebc && fail "/dev/ebc accepted while off"
-	still "power-off and /dev/ebc while off"
+	still "/dev/ebc while off"
 	hwc on || fail "wake modeset: $(tail -1 /hwc.log)"
 	hwc ebc && fail "/dev/ebc drew the wake modeset buffer"
 	still "the wake modeset buffer"
@@ -183,13 +195,23 @@ composer_cycle() {
 	d0=$(dframes)
 	hwc "frame 192" || fail "repeated frame after wake: $(tail -1 /hwc.log)"
 	unchanged "an unchanged frame after wake"
+	[ "$(sleepval "wake refreshes")" = $((w0 + 2 * per)) ] ||
+		fail "wake refreshes $w0 -> $(sleepval "wake refreshes")"
 	[ "$(sleepval "modesets skipped")" = $((k0 + 2)) ] ||
 		fail "modesets skipped $k0 -> $(sleepval "modesets skipped")"
+	f0=$(fval frames)
 	hwc_stop
+	if [ $per = 1 ]; then drawn "the sleep image after the composer exits"; else still "composer exit without a sleep image"; fi
 	idle
-	log "composer cycle: $(grep '^sleep' $S/status)"
+	[ "$(sleepval shown)" = $((s0 + 2 * per)) ] || fail "shown $s0 -> $(sleepval shown)"
+	log "composer cycle, image $1: $(grep '^sleep' $S/status)"
 }
-composer_cycle
+composer_cycle loaded
+rm /lib/firmware/eink_sleep.gray
+unload
+load
+grep -q "^sleep image missing" $S/status || fail "sleep image after rm: $(grep '^sleep' $S/status)"
+composer_cycle missing
 
 i=0
 for m in 2 4 1 5 2 16 15 14 2 4 4 1 2 5 2 3 2; do

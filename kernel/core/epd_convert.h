@@ -19,5 +19,7 @@ void epd_dither_y1_ordered(u8 *buf, u32 w, u32 h, size_t stride, u32 x0, u32 y0)
 void epd_regal_aa_mark(const u8 *levels, size_t stride, u32 w, u32 h, u8 *mark, int shift);
 void epd_convert_update(const u8 *rgba, size_t rgba_stride, u8 *grey, size_t grey_stride, u32 left,
 			u32 top, u32 w, u32 h, u32 flags, bool ggg, bool bgr, const u8 *gamma, int *err);
+void epd_convert_grey8(const u8 *src, size_t src_stride, u8 *grey, size_t grey_stride, u32 left, u32 top,
+		       u32 w, u32 h, u32 flags, const u8 *gamma, int *err);
 
 #endif

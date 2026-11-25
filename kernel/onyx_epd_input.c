@@ -113,16 +113,12 @@ const u8 *epd_fb_cached(struct onyx_epd *p, struct drm_framebuffer *fb)
 	return m->vaddr + fb->offsets[0];
 }
 
-void epd_submit(struct onyx_epd *p, const struct epd_request *r, int n, const u8 *rgba, u32 pitch, bool bgr)
+static void epd_push(struct onyx_epd *p, const struct epd_request *r, int n)
 {
 	struct epd_decision d[EPD_UI_MAX_RECTS];
 	int i;
 	u32 y;
 
-	n = min(n, EPD_UI_MAX_RECTS);
-	for (i = 0; i < n; i++)
-		epd_convert_update(rgba, pitch, p->grey_in, EPD_W, r[i].left, r[i].top, r[i].width, r[i].height,
-				   r[i].flags | (y1_ordered ? EPD_CONV_Y1_ORDERED : 0), false, bgr, p->gamma, p->err);
 	mutex_lock(&p->lock);
 	epd_policy_apply_group(&p->pol, r, n, d);
 	for (i = 0; i < n; i++) {
@@ -133,6 +129,24 @@ void epd_submit(struct onyx_epd *p, const struct epd_request *r, int n, const u8
 	}
 	p->kick = true;
 	mutex_unlock(&p->lock);
+}
+
+void epd_submit(struct onyx_epd *p, const struct epd_request *r, int n, const u8 *rgba, u32 pitch, bool bgr)
+{
+	int i;
+
+	n = min(n, EPD_UI_MAX_RECTS);
+	for (i = 0; i < n; i++)
+		epd_convert_update(rgba, pitch, p->grey_in, EPD_W, r[i].left, r[i].top, r[i].width, r[i].height,
+				   r[i].flags | (y1_ordered ? EPD_CONV_Y1_ORDERED : 0), false, bgr, p->gamma, p->err);
+	epd_push(p, r, n);
+}
+
+void epd_submit_grey(struct onyx_epd *p, const struct epd_request *r, const u8 *grey)
+{
+	epd_convert_grey8(grey, EPD_W, p->grey_in, EPD_W, r->left, r->top, r->width, r->height,
+			  r->flags | (y1_ordered ? EPD_CONV_Y1_ORDERED : 0), p->gamma, p->err);
+	epd_push(p, r, 1);
 }
 
 void epd_request(struct onyx_epd *p, const struct onyx_epdc_upd *u, const u8 *rgba, u32 pitch, bool bgr)
@@ -207,7 +221,7 @@ void epd_redraw(struct onyx_epd *p)
 	struct epd_request r;
 
 	epd_ui_gc_request(&r, EPD_W, EPD_H);
-	pm_wakeup_ws_event(p->ws, 750, false);
+	pm_wakeup_ws_event(p->ws, EPD_WAKE_MS, false);
 	epd_resend(p, &r, 1);
 }
 
@@ -241,7 +255,7 @@ static long ebc_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
 		return -EFAULT;
 	if (!drm_dev_enter(&p->drm, &idx))
 		return -ENODEV;
-	pm_wakeup_ws_event(p->ws, 750, false);	/* stock: 0x2ee ms */
+	pm_wakeup_ws_event(p->ws, EPD_WAKE_MS, false);	/* stock: 0x2ee ms */
 	n = epd_upd_to_req(&u, &r) ? 1 : 0;
 	ret = epd_resend(p, &r, n);
 	drm_dev_exit(idx);

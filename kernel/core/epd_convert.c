@@ -255,6 +255,26 @@ void epd_regal_aa_mark(const u8 *levels, size_t stride, u32 w, u32 h, u8 *mark, 
 	}
 }
 
+static void epd_convert_finish(u8 *dst, size_t stride, u32 left, u32 top, u32 w, u32 h, u32 flags,
+			       const u8 *gamma, u8 mask, int *err)
+{
+	EPD_SIMD_STATE;
+
+	if (gamma)
+		epd_gamma(dst, stride, w, h, gamma, mask);
+	if ((flags & (EPD_CONV_Y1_ORDERED | 0x2000)) == (EPD_CONV_Y1_ORDERED | 0x2000)) {
+#ifdef EPD_NEON
+		epd_simd_begin();
+		epd_dither_y1_ordered(dst, w, h, stride, left, top);
+		epd_simd_end();
+#else
+		epd_dither_y1_ordered(dst, w, h, stride, left, top);
+#endif
+	} else if (flags & EPD_DITHER_FLAGS) {
+		epd_dither(dst, w, h, stride, flags, err);
+	}
+}
+
 void epd_convert_update(const u8 *rgba, size_t rgba_stride, u8 *grey, size_t grey_stride, u32 left,
 			u32 top, u32 w, u32 h, u32 flags, bool ggg, bool bgr, const u8 *gamma, int *err)
 {
@@ -271,17 +291,20 @@ void epd_convert_update(const u8 *rgba, size_t rgba_stride, u8 *grey, size_t gre
 #else
 	epd_rgba_to_grey_scalar(src, rgba_stride, dst, grey_stride, w, h, conv_mask, ggg, bgr);
 #endif
-	if (gamma)
-		epd_gamma(dst, grey_stride, w, h, gamma, mask);
-	if ((flags & (EPD_CONV_Y1_ORDERED | 0x2000)) == (EPD_CONV_Y1_ORDERED | 0x2000)) {
-#ifdef EPD_NEON
-		epd_simd_begin();
-		epd_dither_y1_ordered(dst, w, h, grey_stride, left, top);
-		epd_simd_end();
-#else
-		epd_dither_y1_ordered(dst, w, h, grey_stride, left, top);
-#endif
-	} else if (flags & EPD_DITHER_FLAGS) {
-		epd_dither(dst, w, h, grey_stride, flags, err);
-	}
+	epd_convert_finish(dst, grey_stride, left, top, w, h, flags, gamma, mask, err);
+}
+
+void epd_convert_grey8(const u8 *src, size_t src_stride, u8 *grey, size_t grey_stride, u32 left, u32 top,
+		       u32 w, u32 h, u32 flags, const u8 *gamma, int *err)
+{
+	u8 mask = flags & EPD_DITHER_FLAGS ? 0xff : 0xf0;
+	u8 conv_mask = gamma ? 0xff : mask;
+	const u8 *s = src + top * src_stride + left;
+	u8 *dst = grey + top * grey_stride + left;
+	u32 x, y;
+
+	for (y = 0; y < h; y++)
+		for (x = 0; x < w; x++)
+			dst[y * grey_stride + x] = (u8)(s[y * src_stride + x] & conv_mask);
+	epd_convert_finish(dst, grey_stride, left, top, w, h, flags, gamma, mask, err);
 }

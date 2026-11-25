@@ -777,3 +777,104 @@ TEST(ui_flash_replaces_a_pending_settle_pass)
 	CHECK_EQ(step(&r, 5000, &wait), EPD_UI_IDLE);
 	epd_ui_release(&r.ui);
 }
+
+TEST(ui_seed_takes_the_frame_as_shown)
+{
+	struct ui_rig r;
+
+	ui_rig_init(&r, EPD_UI_SPEED);
+	CHECK_EQ(frame(&r, 0), 1);
+	poke_rows(&r, 0, H);
+	CHECK_EQ(epd_ui_seed(&r.ui, r.fb, PITCH, LEN, 500), 0);
+	CHECK_EQ(frame(&r, 1000), 0);
+	poke(&r, 9, 1);
+	CHECK_EQ(frame(&r, 2000), 1);
+	EXPECT_REQ(&r, 8, 1, 8, 1, 4, 0x2000, 0);
+	epd_ui_release(&r.ui);
+}
+
+TEST(ui_seed_cancels_pending_passes)
+{
+	struct ui_rig r, q;
+	u64 wait = 0;
+
+	ui_rig_init(&r, EPD_UI_SPEED);
+	r.cfg.big_pct = 50;
+	CHECK_EQ(frame(&r, 0), 1);
+	CHECK_EQ(epd_ui_seed(&r.ui, r.fb, PITCH, LEN, 1), 0);
+	CHECK_EQ(step(&r, 5000, &wait), EPD_UI_IDLE);
+	epd_ui_release(&r.ui);
+
+	ui_rig_init(&q, EPD_UI_NORMAL);
+	CHECK_EQ(frame(&q, 0), 1);
+	poke(&q, 9, 1);
+	CHECK_EQ(frame(&q, 99), 1);
+	CHECK_EQ(epd_ui_seed(&q.ui, q.fb, PITCH, LEN, 100), 0);
+	CHECK_EQ(step(&q, 5000, &wait), EPD_UI_IDLE);
+	epd_ui_release(&q.ui);
+}
+
+TEST(ui_seed_restarts_the_gc_interval)
+{
+	struct ui_rig r;
+
+	ui_rig_init(&r, EPD_UI_SPEED);
+	r.cfg.gc_interval = 2;
+	CHECK_EQ(frame(&r, 0), 1);
+	poke(&r, 0, 0);
+	CHECK_EQ(frame(&r, 500), 1);
+	EXPECT_REQ(&r, 0, 0, 8, 1, 4, 0x2000, 0);
+	CHECK_EQ(epd_ui_seed(&r.ui, r.fb, PITCH, LEN, 750), 0);
+	poke(&r, 0, 0);
+	CHECK_EQ(frame(&r, 1000), 1);
+	EXPECT_REQ(&r, 0, 0, 8, 1, 4, 0x2000, 0);
+	poke(&r, 0, 0);
+	CHECK_EQ(frame(&r, 1500), 1);
+	EXPECT_REQ(&r, 0, 0, 8, 1, 4, 0x2000, 0);
+	poke(&r, 0, 0);
+	CHECK_EQ(frame(&r, 2000), 1);
+	EXPECT_REQ(&r, 0, 0, W, H, 2, 0x1000, 1);
+	epd_ui_release(&r.ui);
+}
+
+TEST(ui_seed_rejects_an_unreadable_frame)
+{
+	struct ui_rig r;
+
+	ui_rig_init(&r, EPD_UI_SPEED);
+	CHECK_EQ(frame(&r, 0), 1);
+	CHECK_EQ(epd_ui_seed(&r.ui, r.fb, W * 4 - 1, LEN, 500), -EINVAL);
+	CHECK_EQ(epd_ui_seed(&r.ui, r.fb, PITCH, PITCH * H - 1, 500), -EINVAL);
+	CHECK_EQ(frame(&r, 1000), 1);
+	EXPECT_REQ(&r, 0, 0, W, H, 4, 0x2000, 0);
+	epd_ui_release(&r.ui);
+}
+
+TEST(ui_seed_unreadable_still_cancels_a_pending_big_pass)
+{
+	struct ui_rig r;
+	u64 wait = 0;
+
+	ui_rig_init(&r, EPD_UI_SPEED);
+	r.cfg.big_pct = 50;
+	CHECK_EQ(frame(&r, 0), 1);
+	CHECK(r.ui.big_pending);
+	CHECK_EQ(epd_ui_seed(&r.ui, r.fb, W * 4 - 1, LEN, 500), -EINVAL);
+	CHECK_EQ(step(&r, 5000, &wait), EPD_UI_IDLE);
+	epd_ui_release(&r.ui);
+}
+
+TEST(ui_seed_serves_a_pending_flash)
+{
+	struct ui_rig r;
+	u64 wait = 0;
+
+	ui_rig_init(&r, EPD_UI_SPEED);
+	CHECK_EQ(frame(&r, 0), 1);
+	CHECK_EQ(epd_ui_flash(&r.ui, 50), 0);
+	CHECK_EQ(epd_ui_seed(&r.ui, r.fb, PITCH, LEN, 100), 0);
+	CHECK_EQ(r.ui.flashes, 1);
+	CHECK_EQ(step(&r, 5000, &wait), EPD_UI_IDLE);
+	CHECK_EQ(epd_ui_flash(&r.ui, 599), -EBUSY);
+	epd_ui_release(&r.ui);
+}

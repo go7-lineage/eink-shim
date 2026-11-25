@@ -29,6 +29,8 @@ static char *waveform = "eink_waveform.wbf";
 module_param(waveform, charp, 0444);
 MODULE_PARM_DESC(waveform, "waveform file");
 
+#define EPD_SLEEP_IMAGE	"eink_sleep.gray"
+
 void epd_stat(struct epd_stat *s, u64 t0)
 {
 	u32 us = div_u64(ktime_get_ns() - t0, 1000);
@@ -114,6 +116,26 @@ static int epd_thread(void *data)
 
 static void epd_marker_done(void *ctx, u32 marker) { }
 
+static void epd_load_sleep(struct onyx_epd *p)
+{
+	const struct firmware *fw;
+	int ret = request_firmware_direct(&fw, EPD_SLEEP_IMAGE, p->drm.dev);
+
+	if (ret) {
+		drm_info(&p->drm, "no sleep image %s: %d\n", EPD_SLEEP_IMAGE, ret);
+		return;
+	}
+	if (!epd_sleep_image_ok(fw->size, EPD_W, EPD_H)) {
+		drm_warn(&p->drm, "sleep image %s is %zu bytes, want %d\n", EPD_SLEEP_IMAGE, fw->size, EPD_W * EPD_H);
+		release_firmware(fw);
+		return;
+	}
+	mutex_lock(&p->in_lock);
+	p->sleep_fw = fw;
+	p->sleep.image = true;
+	mutex_unlock(&p->in_lock);
+}
+
 static void epd_setup_work(struct work_struct *w)
 {
 	struct onyx_epd *p = container_of(to_delayed_work(w), struct onyx_epd, setup);
@@ -142,6 +164,7 @@ static void epd_setup_work(struct work_struct *w)
 				epd_engine_set_temp_mc(eng, p->temp_mc);
 				mutex_unlock(&p->lock);
 				drm_info(&p->drm, "waveform %s loaded\n", waveform);
+				epd_load_sleep(p);
 			} else {
 				drm_err(&p->drm, "bad waveform %s: %d\n", waveform, ret);
 				release_firmware(fw);
@@ -456,6 +479,7 @@ static void onyx_epd_remove(struct platform_device *pdev)
 	}
 	epd_engine_destroy(p->eng);
 	release_firmware(p->fw);
+	release_firmware(p->sleep_fw);
 	drm_atomic_helper_shutdown(&p->drm);
 	wakeup_source_unregister(p->ws);
 }

@@ -45,6 +45,7 @@ enum epd_ui_step { EPD_UI_IDLE, EPD_UI_WAIT, EPD_UI_SEND };
 int epd_ui_init(struct epd_ui *u, u32 w, u32 h);
 void epd_ui_release(struct epd_ui *u);
 void epd_ui_invalidate(struct epd_ui *u);
+int epd_ui_seed(struct epd_ui *u, const u8 *rgba, u32 pitch, size_t len, u64 now);
 int epd_ui_mode_by_name(const char *name);
 const char *epd_ui_mode_name(int mode);
 int epd_ui_frame(struct epd_ui *u, const struct epd_ui_cfg *cfg, const u8 *rgba, u32 pitch, size_t len,

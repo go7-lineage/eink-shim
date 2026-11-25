@@ -390,6 +390,31 @@ TEST(convert_update_ordered_y1_needs_both_flags)
 	CHECK_MEM(grey, want, sizeof(grey));
 }
 
+TEST(convert_grey8_matches_rgba_of_the_same_grey)
+{
+	static const u32 flags[] = { 0, 0x1000, 0x2000, 0x2000 | EPD_CONV_Y1_ORDERED, 0x4000, 0x0800, 0x0008 };
+	static u8 src[10 * 16], rgba[10 * 16 * 4], a[10 * 16], b[10 * 16], lut[256];
+	static int err[3 * 16 + 12], err2[3 * 16 + 12];
+	size_t i, f;
+	int g;
+
+	randomize(src, sizeof(src), 11);
+	for (i = 0; i < sizeof(src); i++)
+		memset(rgba + 4 * i, src[i], 4);
+	for (i = 0; i < 256; i++)
+		lut[i] = (u8)(255 - i);
+	for (g = 0; g < 2; g++)
+		for (f = 0; f < ARRAY_LEN(flags); f++) {
+			memset(a, 0x5a, sizeof(a));
+			memset(b, 0x5a, sizeof(b));
+			memset(err, 0, sizeof(err));
+			memset(err2, 0, sizeof(err2));
+			epd_convert_update(rgba, 16 * 4, a, 16, 3, 2, 9, 5, flags[f], true, false, g ? lut : NULL, err);
+			epd_convert_grey8(src, 16, b, 16, 3, 2, 9, 5, flags[f], g ? lut : NULL, err2);
+			CHECK_MEM(b, a, sizeof(a));
+		}
+}
+
 #ifdef EPD_NEON
 TEST(neon_grey_matches_scalar)
 {

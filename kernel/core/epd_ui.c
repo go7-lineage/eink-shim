@@ -348,6 +348,28 @@ static void ui_flash_done(struct epd_ui *u, u64 now)
 		u->flashes++;
 }
 
+static void ui_full_shown(struct epd_ui *u, u64 now)
+{
+	u->settle_mode = -1;
+	u->big_pending = false;
+	if (u->flash_pending)
+		ui_flash_done(u, now);
+	ui_burst_reset(u);
+	ui_transient_reset(u);
+}
+
+int epd_ui_seed(struct epd_ui *u, const u8 *rgba, u32 pitch, size_t len, u64 now)
+{
+	if (ui_diff(u, rgba, pitch, len) == UI_UNREADABLE) {
+		u->valid = false;
+		ui_full_shown(u, now);
+		return -EINVAL;
+	}
+	u->settled = 0;
+	ui_full_shown(u, now);
+	return 0;
+}
+
 int epd_ui_flash(struct epd_ui *u, u64 now)
 {
 	if (u->flash_pending)
@@ -395,14 +417,9 @@ int epd_ui_frame(struct epd_ui *u, const struct epd_ui_cfg *cfg, const u8 *rgba,
 	marker = ui_marker(u);
 
 	if (d.kind == UI_GC16) {
-		u->settle_mode = -1;
-		u->big_pending = false;
-		if (u->flash_pending)
-			ui_flash_done(u, now);
-		ui_burst_reset(u);
+		ui_full_shown(u, now);
 		if (tracked)
 			ui_burst_merge(u);
-		ui_transient_reset(u);
 		ui_upd(out, 0, 0, u->w, u->h, UI_GC_WF, UI_GC_FLAG, true, marker);
 		return 1;
 	}
