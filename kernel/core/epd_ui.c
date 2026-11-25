@@ -66,7 +66,8 @@ int epd_ui_init(struct epd_ui *u, u32 w, u32 h)
 	u->shadow = epd_zalloc((size_t)w / 2 * h * sizeof(u64));
 	u->rows = epd_zalloc(h * sizeof(*u->rows));
 	u->burst = epd_zalloc(h * sizeof(*u->burst));
-	if (!u->shadow || !u->rows || !u->burst) {
+	u->transient = epd_zalloc(h * sizeof(*u->transient));
+	if (!u->shadow || !u->rows || !u->burst || !u->transient) {
 		epd_ui_release(u);
 		return -ENOMEM;
 	}
@@ -79,9 +80,11 @@ void epd_ui_release(struct epd_ui *u)
 	epd_free(u->shadow);
 	epd_free(u->rows);
 	epd_free(u->burst);
+	epd_free(u->transient);
 	u->shadow = NULL;
 	u->rows = NULL;
 	u->burst = NULL;
+	u->transient = NULL;
 }
 
 void epd_ui_invalidate(struct epd_ui *u)
@@ -91,13 +94,9 @@ void epd_ui_invalidate(struct epd_ui *u)
 
 enum ui_diff { UI_UNCHANGED, UI_CHANGED, UI_UNREADABLE };
 
-struct ui_rect {
-	u32 x, y, w, h;
-};
-
-static enum ui_diff ui_diff(struct epd_ui *u, const u8 *frame, u32 pitch, size_t len, struct ui_rect *r)
+static enum ui_diff ui_diff(struct epd_ui *u, const u8 *frame, u32 pitch, size_t len)
 {
-	u32 words = u->w / 2, y, x0 = 0, x1 = 0, y0 = 0, y1 = 0;
+	u32 words = u->w / 2, y;
 	size_t row_bytes = (size_t)words * 8;
 	bool any = false;
 
@@ -133,29 +132,10 @@ static enum ui_diff ui_diff(struct epd_ui *u, const u8 *frame, u32 pitch, size_t
 			memcpy(&shadow[i], src + (size_t)i * 8, 8);
 		u->rows[y].start = (u16)(a * 2);
 		u->rows[y].end = (u16)((z + 1) * 2);
-		if (!any) {
-			x0 = a * 2;
-			x1 = (z + 1) * 2;
-			y0 = y;
-			any = true;
-		} else {
-			x0 = x0 < a * 2 ? x0 : a * 2;
-			x1 = x1 > (z + 1) * 2 ? x1 : (z + 1) * 2;
-		}
-		y1 = y + 1;
+		any = true;
 	}
 	u->valid = true;
-	if (!any)
-		return UI_UNCHANGED;
-	x0 &= ~7u;
-	x1 = (x1 + 7) & ~7u;
-	if (x1 > u->w)
-		x1 = u->w;
-	r->x = x0;
-	r->y = y0;
-	r->w = x1 - x0;
-	r->h = y1 - y0;
-	return UI_CHANGED;
+	return any ? UI_CHANGED : UI_UNCHANGED;
 }
 
 static void ui_burst_reset(struct epd_ui *u)
@@ -164,13 +144,13 @@ static void ui_burst_reset(struct epd_ui *u)
 	u->burst_frames = 0;
 }
 
-static void ui_burst_merge(struct epd_ui *u)
+static void ui_spans_merge(u32 h, struct epd_ui_span *dst, const struct epd_ui_span *src)
 {
 	u32 y;
 
-	for (y = 0; y < u->h; y++) {
-		const struct epd_ui_span *f = &u->rows[y];
-		struct epd_ui_span *b = &u->burst[y];
+	for (y = 0; y < h; y++) {
+		const struct epd_ui_span *f = &src[y];
+		struct epd_ui_span *b = &dst[y];
 
 		if (!f->end)
 			continue;
@@ -181,6 +161,100 @@ static void ui_burst_merge(struct epd_ui *u)
 			b->end = b->end > f->end ? b->end : f->end;
 		}
 	}
+}
+
+static void ui_burst_merge(struct epd_ui *u)
+{
+	ui_spans_merge(u->h, u->burst, u->rows);
+}
+
+static void ui_transient_reset(struct epd_ui *u)
+{
+	memset(u->transient, 0, u->h * sizeof(*u->transient));
+	u->untracked = false;
+}
+
+struct ui_band {
+	u32 y0, y1, x0, x1;
+};
+
+static u64 ui_band_area(const struct ui_band *b)
+{
+	return (u64)(b->x1 - b->x0) * (b->y1 - b->y0);
+}
+
+static struct ui_band ui_band_join(const struct ui_band *a, const struct ui_band *b)
+{
+	struct ui_band j = { a->y0, b->y1, a->x0 < b->x0 ? a->x0 : b->x0, a->x1 > b->x1 ? a->x1 : b->x1 };
+
+	return j;
+}
+
+static u64 ui_band_join_cost(const struct ui_band *b, int i)
+{
+	struct ui_band j = ui_band_join(&b[i], &b[i + 1]);
+
+	return ui_band_area(&j) - ui_band_area(&b[i]) - ui_band_area(&b[i + 1]);
+}
+
+static void ui_bands_squeeze(struct ui_band *b, int *n)
+{
+	u64 best_cost = ui_band_join_cost(b, 0), cost;
+	int i, best = 0;
+
+	for (i = 1; i + 1 < *n; i++) {
+		cost = ui_band_join_cost(b, i);
+		if (cost < best_cost) {
+			best_cost = cost;
+			best = i;
+		}
+	}
+	b[best] = ui_band_join(&b[best], &b[best + 1]);
+	for (i = best + 1; i + 1 < *n; i++)
+		b[i] = b[i + 1];
+	(*n)--;
+}
+
+static int ui_bands(const struct epd_ui *u, const struct epd_ui_span *a, const struct epd_ui_span *b,
+		    struct ui_band *out)
+{
+	struct ui_band band[EPD_UI_MAX_RECTS + 1];
+	bool open = false;
+	int n = 0, i;
+	u32 y;
+
+	for (y = 0; y < u->h; y++) {
+		u32 x0 = a[y].start, x1 = a[y].end;
+
+		if (b && b[y].end) {
+			x0 = !x1 || b[y].start < x0 ? b[y].start : x0;
+			x1 = b[y].end > x1 ? b[y].end : x1;
+		}
+		if (!x1) {
+			open = false;
+			continue;
+		}
+		if (open) {
+			struct ui_band row = { y, y + 1, x0, x1 };
+
+			band[n - 1] = ui_band_join(&band[n - 1], &row);
+			continue;
+		}
+		if (n == EPD_UI_MAX_RECTS + 1)
+			ui_bands_squeeze(band, &n);
+		band[n++] = (struct ui_band){ y, y + 1, x0, x1 };
+		open = true;
+	}
+	if (n > EPD_UI_MAX_RECTS)
+		ui_bands_squeeze(band, &n);
+	for (i = 0; i < n; i++) {
+		out[i] = band[i];
+		out[i].x0 &= ~7u;
+		out[i].x1 = (out[i].x1 + 7) & ~7u;
+		if (out[i].x1 > u->w)
+			out[i].x1 = u->w;
+	}
+	return n;
 }
 
 static bool ui_burst_add(struct epd_ui *u, bool new_burst, int pct)
@@ -263,14 +337,30 @@ void epd_ui_gc_request(struct epd_request *out, u32 w, u32 h)
 	ui_upd(out, 0, 0, w, h, UI_GC_WF, UI_GC_FLAG, true, 0);
 }
 
+static int ui_send(const struct epd_ui *u, const struct epd_ui_span *a, const struct epd_ui_span *b, int wf,
+		   u32 flag, bool full, int marker, struct epd_request *out)
+{
+	struct ui_band band[EPD_UI_MAX_RECTS];
+	int n = ui_bands(u, a, b, band), i;
+
+	if (!n) {
+		ui_upd(out, 0, 0, u->w, u->h, wf, flag, full, marker);
+		return 1;
+	}
+	for (i = 0; i < n; i++)
+		ui_upd(&out[i], band[i].x0, band[i].y0, band[i].x1 - band[i].x0, band[i].y1 - band[i].y0, wf, flag,
+		       full, marker);
+	return n;
+}
+
 int epd_ui_frame(struct epd_ui *u, const struct epd_ui_cfg *cfg, const u8 *rgba, u32 pitch, size_t len,
 		 u64 now, struct epd_request *out, int *cut)
 {
 	const struct ui_mode *m = ui_mode(cfg->mode);
 	struct ui_decision d;
-	struct ui_rect r = { 0, 0, u->w, u->h };
-	enum ui_diff diff = ui_diff(u, rgba, pitch, len, &r);
+	enum ui_diff diff = ui_diff(u, rgba, pitch, len);
 	bool tracked = diff == UI_CHANGED;
+	int marker;
 
 	*cut = -1;
 	if (diff == UI_UNCHANGED)
@@ -278,44 +368,53 @@ int epd_ui_frame(struct epd_ui *u, const struct epd_ui_cfg *cfg, const u8 *rgba,
 	ui_decide(u, cfg->mode, cfg->gc_interval, now, &d);
 	if (d.mode_changed)
 		*cut = m->debounced ? 0 : cfg->a2cut < 0 ? -1 : cfg->a2cut > 9 ? 9 : cfg->a2cut;
+	marker = ui_marker(u);
 
-	switch (d.kind) {
-	case UI_GC16:
+	if (d.kind == UI_GC16) {
 		u->settle_mode = -1;
 		u->big_pending = false;
 		ui_burst_reset(u);
 		if (tracked)
 			ui_burst_merge(u);
-		ui_upd(out, 0, 0, u->w, u->h, UI_GC_WF, UI_GC_FLAG, true, ui_marker(u));
-		break;
-	case UI_TRANSIENT:
-	case UI_NORMAL:
-		if (d.kind == UI_TRANSIENT)
-			u->settle_mode = cfg->mode;
-		if (tracked)
-			u->big_pending = ui_burst_add(u, d.new_burst, cfg->big_pct);
-		if (d.kind == UI_TRANSIENT)
-			m = &ui_a2;
-		ui_upd(out, r.x, r.y, r.w, r.h, m->wf, m->flag, false, ui_marker(u));
-		break;
+		ui_transient_reset(u);
+		ui_upd(out, 0, 0, u->w, u->h, UI_GC_WF, UI_GC_FLAG, true, marker);
+		return 1;
 	}
-	return 1;
+	if (d.kind == UI_TRANSIENT) {
+		u->settle_mode = cfg->mode;
+		m = &ui_a2;
+	}
+	if (!tracked) {
+		u->untracked = true;
+		ui_upd(out, 0, 0, u->w, u->h, m->wf, m->flag, false, marker);
+		return 1;
+	}
+	u->big_pending = ui_burst_add(u, d.new_burst, cfg->big_pct);
+	if (d.kind == UI_TRANSIENT)
+		ui_spans_merge(u->h, u->transient, u->rows);
+	return ui_send(u, u->rows, NULL, m->wf, m->flag, false, marker, out);
 }
 
-enum epd_ui_step epd_ui_step(struct epd_ui *u, u64 now, struct epd_request *out, u64 *wait)
+enum epd_ui_step epd_ui_step(struct epd_ui *u, u64 now, struct epd_request *out, int *n, u64 *wait)
 {
+	const struct epd_ui_span *a, *b;
 	int wf;
 	u32 flag;
 	u64 quiet;
 
+	*n = 0;
 	if (u->big_pending) {
 		wf = UI_GC_WF;
 		flag = UI_GC_FLAG;
 		quiet = UI_BIG_QUIET_MS;
+		a = u->burst;
+		b = u->transient;
 	} else if (u->settle_mode >= 0) {
 		wf = ui_mode(u->settle_mode)->wf;
 		flag = ui_mode(u->settle_mode)->flag;
 		quiet = UI_SETTLE_MS;
+		a = u->transient;
+		b = NULL;
 	} else {
 		return EPD_UI_IDLE;
 	}
@@ -325,6 +424,12 @@ enum epd_ui_step epd_ui_step(struct epd_ui *u, u64 now, struct epd_request *out,
 	}
 	u->settle_mode = -1;
 	u->big_pending = false;
-	ui_upd(out, 0, 0, u->w, u->h, wf, flag, true, ui_marker(u));
+	if (u->untracked) {
+		ui_upd(out, 0, 0, u->w, u->h, wf, flag, true, ui_marker(u));
+		*n = 1;
+	} else {
+		*n = ui_send(u, a, b, wf, flag, true, ui_marker(u), out);
+	}
+	ui_transient_reset(u);
 	return EPD_UI_SEND;
 }

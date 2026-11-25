@@ -158,25 +158,26 @@ static void epd_plane_atomic_update(struct drm_plane *plane, struct drm_atomic_s
 		if (p->ui_ok)
 			epd_ui_invalidate(&p->ui);
 	} else if (epd_param_ui && p->ui_ok) {
-		struct epd_request r;
+		struct epd_request r[EPD_UI_MAX_RECTS];
 		int cut;
 
 		u64 t0 = ktime_get_ns();
-		int n = fb->format->cpp[0] == 4 &&
+		int n = fb->format->cpp[0] != 4 ? 0 :
 			epd_ui_frame(&p->ui, &p->ui_cfg, vaddr, fb->pitches[0],
-				     fb->obj[0]->size - fb->offsets[0], epd_now_ms(), &r, &cut);
+				     fb->obj[0]->size - fb->offsets[0], epd_now_ms(), r, &cut);
 
 		p->ui_us_last = div_u64(ktime_get_ns() - t0, 1000);
 		p->ui_us_max = max(p->ui_us_max, p->ui_us_last);
 		p->ui_frames++;
 		if (n) {
 			p->ui_updates++;
+			p->ui_rects += (u64)n;
 			if (cut >= 0) {
 				mutex_lock(&p->lock);
 				epd_set_cut(p, cut);
 				mutex_unlock(&p->lock);
 			}
-			epd_submit(p, &r, vaddr, fb->pitches[0], epd_fb_bgr(fb));
+			epd_submit(p, r, n, vaddr, fb->pitches[0], epd_fb_bgr(fb));
 			mod_delayed_work(system_unbound_wq, &p->ui_work, 0);
 		}
 	} else {

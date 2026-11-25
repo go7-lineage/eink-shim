@@ -73,6 +73,24 @@ void epd_policy_apply(struct epd_policy *p, const struct epd_request *in, struct
 	p->last_flags = in->flags;
 }
 
+void epd_policy_apply_group(struct epd_policy *p, const struct epd_request *in, int n, struct epd_decision *out)
+{
+	int i;
+
+	if (n < 1)
+		return;
+	epd_policy_apply(p, &in[0], &out[0]);
+	for (i = 1; i < n; i++) {
+		out[i] = out[0];
+		out[i].upd.top = in[i].top;
+		out[i].upd.left = in[i].left;
+		out[i].upd.width = in[i].width;
+		out[i].upd.height = in[i].height;
+		out[i].upd.marker = in[i].marker;
+		out[i].barrier = false;
+	}
+}
+
 void epd_queue_init(struct epd_queue *q)
 {
 	memset(q, 0, sizeof(*q));

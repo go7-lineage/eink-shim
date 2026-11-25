@@ -115,6 +115,71 @@ TEST(policy_a2_entry_is_du_when_cleaning)
 	EXPECT(apply(&p, GC16, 0, 8), GC16, true, false);
 }
 
+static void apply_group(struct epd_policy *p, int mode, int update_mode, struct epd_decision *d)
+{
+	struct epd_request r[3];
+	int i;
+
+	for (i = 0; i < 3; i++)
+		r[i] = (struct epd_request){ .top = (u16)(10 * i), .left = (u16)i, .width = 8, .height = 2,
+					     .mode = mode, .update_mode = update_mode, .marker = 50, .flags = 0 };
+	memset(d, 0xee, 3 * sizeof(*d));
+	epd_policy_apply_group(p, r, 3, d);
+	for (i = 0; i < 3; i++) {
+		CHECK_EQ(d[i].upd.top, 10 * i);
+		CHECK_EQ(d[i].upd.left, i);
+		CHECK_EQ(d[i].upd.width, 8);
+		CHECK_EQ(d[i].upd.height, 2);
+		CHECK_EQ(d[i].upd.marker, 50);
+		CHECK_EQ(d[i].flags, 0);
+	}
+}
+
+TEST(policy_group_after_a2_is_full_everywhere)
+{
+	struct epd_decision d[3];
+	struct epd_policy p;
+	int i;
+
+	epd_policy_init(&p, false);
+	apply(&p, A2, 0, 0);
+	apply_group(&p, AUTO, 0, d);
+	for (i = 0; i < 3; i++)
+		EXPECT(d[i], GC16, true, false);
+	apply_group(&p, AUTO, 0, d);
+	for (i = 0; i < 3; i++)
+		EXPECT(d[i], GC16, false, false);
+}
+
+TEST(policy_group_enters_a2_as_du_everywhere)
+{
+	struct epd_decision d[3];
+	struct epd_policy p;
+	int i;
+
+	epd_policy_init(&p, true);
+	apply(&p, GC16, 0, 8);
+	apply_group(&p, A2, 0, d);
+	for (i = 0; i < 3; i++)
+		EXPECT(d[i], DU, true, false);
+	apply_group(&p, A2, 0, d);
+	for (i = 0; i < 3; i++)
+		EXPECT(d[i], A2, true, false);
+}
+
+TEST(policy_group_barrier_is_only_on_the_first)
+{
+	struct epd_decision d[3];
+	struct epd_policy p;
+
+	epd_policy_init(&p, false);
+	apply(&p, DU, 0, 0);
+	apply_group(&p, AUTO, 0, d);
+	EXPECT(d[0], GC16, true, true);
+	EXPECT(d[1], GC16, true, false);
+	EXPECT(d[2], GC16, true, false);
+}
+
 static struct epd_decision dec(u16 left, u16 top, u16 w, u16 h, int mode, bool full, u32 marker)
 {
 	struct epd_decision d = { .upd = { .top = top, .left = left, .width = w, .height = h, .mode = mode,

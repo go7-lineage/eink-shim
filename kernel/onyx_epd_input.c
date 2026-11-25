@@ -113,19 +113,24 @@ const u8 *epd_fb_cached(struct onyx_epd *p, struct drm_framebuffer *fb)
 	return m->vaddr + fb->offsets[0];
 }
 
-void epd_submit(struct onyx_epd *p, const struct epd_request *r, const u8 *rgba, u32 pitch, bool bgr)
+void epd_submit(struct onyx_epd *p, const struct epd_request *r, int n, const u8 *rgba, u32 pitch, bool bgr)
 {
-	struct epd_decision d;
+	struct epd_decision d[EPD_UI_MAX_RECTS];
+	int i;
 	u32 y;
 
-	epd_convert_update(rgba, pitch, p->grey_in, EPD_W, r->left, r->top, r->width, r->height,
-			   r->flags | (y1_ordered ? EPD_CONV_Y1_ORDERED : 0), false, bgr, p->gamma, p->err);
+	n = min(n, EPD_UI_MAX_RECTS);
+	for (i = 0; i < n; i++)
+		epd_convert_update(rgba, pitch, p->grey_in, EPD_W, r[i].left, r[i].top, r[i].width, r[i].height,
+				   r[i].flags | (y1_ordered ? EPD_CONV_Y1_ORDERED : 0), false, bgr, p->gamma, p->err);
 	mutex_lock(&p->lock);
-	epd_policy_apply(&p->pol, r, &d);
-	for (y = r->top; y < (u32)r->top + r->height; y++)
-		memcpy(p->grey + (size_t)y * EPD_W + r->left, p->grey_in + (size_t)y * EPD_W + r->left,
-		       r->width);
-	epd_queue_push(&p->q, &d);
+	epd_policy_apply_group(&p->pol, r, n, d);
+	for (i = 0; i < n; i++) {
+		for (y = r[i].top; y < (u32)r[i].top + r[i].height; y++)
+			memcpy(p->grey + (size_t)y * EPD_W + r[i].left, p->grey_in + (size_t)y * EPD_W + r[i].left,
+			       r[i].width);
+		epd_queue_push(&p->q, &d[i]);
+	}
 	p->kick = true;
 	mutex_unlock(&p->lock);
 }
@@ -136,7 +141,7 @@ void epd_request(struct onyx_epd *p, const struct onyx_epdc_upd *u, const u8 *rg
 
 	if (epd_upd_to_req(u, &r)) {
 		epd_link_hint(p);
-		epd_submit(p, &r, rgba, pitch, bgr);
+		epd_submit(p, &r, 1, rgba, pitch, bgr);
 	}
 }
 
@@ -154,7 +159,7 @@ void epd_set_cut(struct onyx_epd *p, u32 cut)
 
 #define EBC_SEND_UPDATE		0x700c
 
-static int epd_resend(struct onyx_epd *p, const struct epd_request *r)
+static int epd_resend(struct onyx_epd *p, const struct epd_request *r, int n)
 {
 	struct iosys_map map[DRM_FORMAT_MAX_PLANES], data[DRM_FORMAT_MAX_PLANES];
 	struct drm_plane *plane = &p->plane;
@@ -178,10 +183,10 @@ static int epd_resend(struct onyx_epd *p, const struct epd_request *r)
 	ret = drm_gem_fb_begin_cpu_access(fb, DMA_FROM_DEVICE);
 	if (!ret) {
 		mutex_lock(&p->in_lock);
-		if (r) {
+		if (n) {
 			const u8 *fast = epd_fb_cached(p, fb);
 
-			epd_submit(p, r, fast ? fast : data[0].vaddr, fb->pitches[0], epd_fb_bgr(fb));
+			epd_submit(p, r, n, fast ? fast : data[0].vaddr, fb->pitches[0], epd_fb_bgr(fb));
 		}
 		mutex_unlock(&p->in_lock);
 		wake_up(&p->wq);
@@ -201,7 +206,7 @@ void epd_redraw(struct onyx_epd *p)
 
 	epd_ui_gc_request(&r, EPD_W, EPD_H);
 	pm_wakeup_ws_event(p->ws, 750, false);
-	epd_resend(p, &r);
+	epd_resend(p, &r, 1);
 }
 
 static int ebc_open(struct inode *inode, struct file *f)
@@ -226,7 +231,7 @@ static long ebc_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
 	struct onyx_epd *p = f->private_data;
 	struct onyx_epdc_upd u;
 	struct epd_request r;
-	int idx, ret;
+	int idx, n, ret;
 
 	if (cmd != EBC_SEND_UPDATE)
 		return -ENOTTY;
@@ -235,7 +240,8 @@ static long ebc_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
 	if (!drm_dev_enter(&p->drm, &idx))
 		return -ENODEV;
 	pm_wakeup_ws_event(p->ws, 750, false);	/* stock: 0x2ee ms */
-	ret = epd_resend(p, epd_upd_to_req(&u, &r) ? &r : NULL);
+	n = epd_upd_to_req(&u, &r) ? 1 : 0;
+	ret = epd_resend(p, &r, n);
 	drm_dev_exit(idx);
 	return ret;
 }
@@ -243,17 +249,20 @@ static long ebc_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
 void epd_ui_work(struct work_struct *work)
 {
 	struct onyx_epd *p = container_of(to_delayed_work(work), struct onyx_epd, ui_work);
-	struct epd_request r;
+	struct epd_request r[EPD_UI_MAX_RECTS];
 	enum epd_ui_step st;
 	u64 wait = 0;
+	int n;
 
 	mutex_lock(&p->in_lock);
-	st = epd_ui_step(&p->ui, epd_now_ms(), &r, &wait);
+	st = epd_ui_step(&p->ui, epd_now_ms(), r, &n, &wait);
 	mutex_unlock(&p->in_lock);
-	if (st == EPD_UI_WAIT)
+	if (st == EPD_UI_WAIT) {
 		mod_delayed_work(system_unbound_wq, &p->ui_work, msecs_to_jiffies(wait));
-	else if (st == EPD_UI_SEND && !epd_resend(p, &r))
+	} else if (st == EPD_UI_SEND && !epd_resend(p, r, n)) {
 		p->ui_passes++;
+		p->ui_rects += (u64)n;
+	}
 }
 
 const struct file_operations ebc_fops = {

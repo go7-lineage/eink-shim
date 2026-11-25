@@ -36,6 +36,7 @@ struct epd_queue {
 bool epd_request_clip(struct epd_request *r, s32 left, s32 top, s32 width, s32 height, u32 w, u32 h);
 void epd_policy_init(struct epd_policy *p, bool du_a2_clean);
 void epd_policy_apply(struct epd_policy *p, const struct epd_request *in, struct epd_decision *out);
+void epd_policy_apply_group(struct epd_policy *p, const struct epd_request *in, int n, struct epd_decision *out);
 void epd_queue_init(struct epd_queue *q);
 void epd_queue_push(struct epd_queue *q, const struct epd_decision *d);
 bool epd_queue_pop(struct epd_queue *q, bool engine_busy, struct epd_decision *out);

@@ -71,7 +71,7 @@ struct onyx_epd {
 	const u8 *gamma;
 	u8 gamma_lut[256];
 	struct delayed_work ui_work;
-	u64 ui_frames, ui_updates, ui_passes, ui_cached;
+	u64 ui_frames, ui_updates, ui_passes, ui_rects, ui_cached;
 	u32 ui_us_last, ui_us_max;
 
 	struct epd_stat { u32 last, max; u64 sum, n; } st_tick, st_copy, st_commit, st_link, st_power, st_first;
@@ -149,7 +149,7 @@ int epd_out_thread(void *data);
 
 const u8 *epd_fb_cached(struct onyx_epd *p, struct drm_framebuffer *fb);
 void epd_fbmap_free(void *data);
-void epd_submit(struct onyx_epd *p, const struct epd_request *r, const u8 *rgba, u32 pitch, bool bgr);
+void epd_submit(struct onyx_epd *p, const struct epd_request *r, int n, const u8 *rgba, u32 pitch, bool bgr);
 void epd_request(struct onyx_epd *p, const struct onyx_epdc_upd *u, const u8 *rgba, u32 pitch, bool bgr);
 void epd_redraw(struct onyx_epd *p);
 void epd_ui_work(struct work_struct *work);
