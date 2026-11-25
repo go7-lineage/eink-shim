@@ -402,6 +402,31 @@ TEST(wbf_temp_index)
 	epd_wbf_release(&w);
 }
 
+TEST(wbf_temp_index_hyst)
+{
+	const struct wbf_blob *b = fixture_wbf();
+	struct epd_wbf w;
+
+	CHECK_EQ(epd_wbf_parse(&w, b->data, b->size), 0);
+	CHECK_EQ(epd_temp_index_hyst(&w, -1, 19999), 0);
+	CHECK_EQ(epd_temp_index_hyst(&w, -1, 20000), 1);
+	CHECK_EQ(epd_temp_index_hyst(&w, -1, -40000), 0);
+	CHECK_EQ(epd_temp_index_hyst(&w, 3, 25000), 1);
+	CHECK_EQ(epd_temp_index_hyst(&w, 0, 20000), 0);
+	CHECK_EQ(epd_temp_index_hyst(&w, 0, 20999), 0);
+	CHECK_EQ(epd_temp_index_hyst(&w, 0, 21000), 1);
+	CHECK_EQ(epd_temp_index_hyst(&w, 0, 45000), 2);
+	CHECK_EQ(epd_temp_index_hyst(&w, 1, 19000), 1);
+	CHECK_EQ(epd_temp_index_hyst(&w, 1, 18999), 0);
+	CHECK_EQ(epd_temp_index_hyst(&w, 1, 30999), 1);
+	CHECK_EQ(epd_temp_index_hyst(&w, 1, 31000), 2);
+	CHECK_EQ(epd_temp_index_hyst(&w, 2, 29000), 2);
+	CHECK_EQ(epd_temp_index_hyst(&w, 2, 5000), 0);
+	CHECK_EQ(epd_temp_index_hyst(&w, 2, 200000), 2);
+	CHECK_EQ(epd_temp_index_hyst(&w, 0, -40000), 0);
+	epd_wbf_release(&w);
+}
+
 TEST(wbf_mode_slot)
 {
 	static const int go7[17] = { 0, 1, 2, 255, 6, 4, 255, 255, 255, 255, 255, 255, 255, 255, 0, 9, 10 };

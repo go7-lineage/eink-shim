@@ -603,9 +603,9 @@ int epd_engine_mode_frames(struct epd_engine *e, int mode, bool full)
 	return ret ? ret : table->n;
 }
 
-int epd_engine_set_temp(struct epd_engine *e, int temp_c)
+int epd_engine_set_temp_mc(struct epd_engine *e, int temp_mc)
 {
-	int t = epd_temp_index(&e->wf, temp_c);
+	int t = epd_temp_index_hyst(&e->wf, e->t, temp_mc);
 	size_t per_t = (size_t)e->wf.n_modes * CACHE_VARIANTS, i;
 
 	if (t != e->t) {
@@ -615,6 +615,12 @@ int epd_engine_set_temp(struct epd_engine *e, int temp_c)
 		e->t = t;
 	}
 	return 0;
+}
+
+void epd_engine_temp_range(const struct epd_engine *e, int *lo, int *hi)
+{
+	*lo = e->wf.temp_bounds[e->t];
+	*hi = e->wf.temp_bounds[e->t + 1];
 }
 
 int epd_engine_set_cut(struct epd_engine *e, int cut)

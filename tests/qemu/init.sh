@@ -44,6 +44,8 @@ log "start"
 load
 log "loaded: $(fake)"
 grep -q "usercode" /sys/bus/i2c/devices/*-003c/chipid || fail "tcon chipid"
+wait_for 'grep -q "temperature 24000 mC from temp_c (qcom_qg: -19), waveform range 20-30 C" $S/status' 5 ||
+	fail "temperature: $(grep temperature $S/status)"
 
 pattern white
 log "white: $(fake)"

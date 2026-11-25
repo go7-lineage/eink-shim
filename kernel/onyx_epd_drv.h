@@ -106,6 +106,9 @@ struct onyx_epd {
 	struct delayed_work link_off;
 	struct delayed_work setup;
 	int tries;
+	struct delayed_work temp_work;
+	int temp_mc;
+	int temp_err;
 	u64 frames;
 
 	struct miscdevice misc;
@@ -137,6 +140,11 @@ void epd_power_up(struct onyx_epd *p);
 void epd_power_down(struct onyx_epd *p);
 void epd_power_off_later(struct onyx_epd *p);
 void epd_power_off_work(struct work_struct *w);
+
+void epd_temp_init(struct onyx_epd *p);
+void epd_temp_start(struct onyx_epd *p);
+void epd_temp_stop(struct onyx_epd *p);
+int epd_temp_emit(struct onyx_epd *p, char *buf, int at);
 
 struct drm_device *epd_dsi_drm_device(struct device_node *dsi_np);
 int epd_setup_output(struct onyx_epd *p);

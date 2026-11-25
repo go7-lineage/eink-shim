@@ -29,9 +29,6 @@ static char *waveform = "eink_waveform.wbf";
 module_param(waveform, charp, 0444);
 MODULE_PARM_DESC(waveform, "waveform file");
 
-static int temp_c = 24;
-module_param(temp_c, int, 0644);
-
 void epd_stat(struct epd_stat *s, u64 t0)
 {
 	u32 us = div_u64(ktime_get_ns() - t0, 1000);
@@ -122,7 +119,7 @@ static void epd_setup_work(struct work_struct *w)
 	struct onyx_epd *p = container_of(to_delayed_work(w), struct onyx_epd, setup);
 	struct epd_engine_cfg cfg = {
 		.timing = &epd_timing_go7,
-		.temp_c = temp_c,
+		.temp_c = READ_ONCE(p->temp_mc) / 1000,
 		.tables = { .cut = p->cut, .fill_zero = true, .a2_clean_mode = 2 },
 		.marker_done = epd_marker_done,
 		.ctx = p,
@@ -142,6 +139,7 @@ static void epd_setup_work(struct work_struct *w)
 				mutex_lock(&p->lock);
 				p->fw = fw;
 				p->eng = eng;
+				epd_engine_set_temp_mc(eng, p->temp_mc);
 				mutex_unlock(&p->lock);
 				drm_info(&p->drm, "waveform %s loaded\n", waveform);
 			} else {
@@ -320,6 +318,7 @@ static int onyx_epd_probe(struct platform_device *pdev)
 	INIT_DELAYED_WORK(&p->link_off, epd_link_off_work);
 	INIT_DELAYED_WORK(&p->setup, epd_setup_work);
 	INIT_DELAYED_WORK(&p->ui_work, epd_ui_work);
+	epd_temp_init(p);
 	p->ui_cfg = (struct epd_ui_cfg){ .mode = EPD_UI_SPEED, .gc_interval = 20, .big_pct = 50, .a2cut = 3 };
 	p->levels = (struct epd_levels)EPD_LEVELS_IDENTITY;
 	p->cut = 3;
@@ -413,6 +412,7 @@ static int onyx_epd_probe(struct platform_device *pdev)
 	if (ret)
 		goto err_pm;
 	schedule_delayed_work(&p->setup, 0);
+	epd_temp_start(p);
 	return 0;
 
 err_pm:
@@ -443,6 +443,7 @@ static void onyx_epd_remove(struct platform_device *pdev)
 	drm_dev_unplug(&p->drm);
 	cancel_delayed_work_sync(&p->setup);
 	cancel_delayed_work_sync(&p->ui_work);
+	epd_temp_stop(p);
 	kthread_stop(p->thread);
 	kthread_stop(p->out_thread);
 	cancel_delayed_work_sync(&p->power_off);

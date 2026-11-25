@@ -179,6 +179,20 @@ int epd_temp_index(const struct epd_wbf *w, int temp_c)
 	return idx;
 }
 
+int epd_temp_index_hyst(const struct epd_wbf *w, int cur, int temp_mc)
+{
+	int i, idx = 0;
+
+	for (i = 0; i < w->n_temps; i++)
+		if (w->temp_bounds[i] * 1000 <= temp_mc)
+			idx = i;
+	if (cur < 0 || cur >= w->n_temps || idx == cur)
+		return idx;
+	if (idx > cur)
+		return temp_mc >= w->temp_bounds[cur + 1] * 1000 + EPD_TEMP_HYST_MC ? idx : cur;
+	return temp_mc < w->temp_bounds[cur] * 1000 - EPD_TEMP_HYST_MC ? idx : cur;
+}
+
 /* stock wf_trans_info */
 static const u8 wf_trans_info[][19] = {
 	{ 3, 0, 0, 1, 2, 3, 4, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 255, 255 },

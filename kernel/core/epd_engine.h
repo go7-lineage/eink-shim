@@ -29,7 +29,8 @@ struct epd_engine_cfg {
 struct epd_engine;
 struct epd_engine *epd_engine_create(const struct epd_engine_cfg *cfg, const u8 *wbf, size_t size, int *err);
 void epd_engine_destroy(struct epd_engine *e);
-int epd_engine_set_temp(struct epd_engine *e, int temp_c);
+int epd_engine_set_temp_mc(struct epd_engine *e, int temp_mc);
+void epd_engine_temp_range(const struct epd_engine *e, int *lo, int *hi);
 int epd_engine_set_cut(struct epd_engine *e, int cut);
 int epd_engine_get_cut(const struct epd_engine *e);
 int epd_engine_submit(struct epd_engine *e, const struct epd_update *u, const u8 *grey8, size_t stride);

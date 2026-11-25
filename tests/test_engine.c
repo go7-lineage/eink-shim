@@ -411,15 +411,38 @@ TEST(engine_temperature_selects_the_table)
 
 	rig_init(&r);
 	CHECK_EQ(epd_engine_mode_frames(r.e, GC16, true), (int)fixture_frames(2, 0));
-	CHECK_EQ(epd_engine_set_temp(r.e, 25), 0);
+	CHECK_EQ(epd_engine_set_temp_mc(r.e, 25000), 0);
 	CHECK_EQ(epd_engine_mode_frames(r.e, GC16, true), (int)fixture_frames(2, 1));
 	fill(&r, 6);
 	CHECK_EQ(submit(&r, 0, 0, 8, 1, GC16, true, 1), 0);
 	CHECK_EQ(epd_engine_tick(r.e, r.frame), 1);
 	CHECK_EQ(drive_at(&r, 0, 0), fixture_drive(2, 1, 0, 12, 0));
-	CHECK_EQ(epd_engine_set_temp(r.e, 45), 0);
+	CHECK_EQ(epd_engine_set_temp_mc(r.e, 45000), 0);
 	CHECK_EQ(run(&r), (int)fixture_frames(2, 1) - 1);
 	CHECK_EQ(epd_engine_mode_frames(r.e, GC16, true), (int)fixture_frames(2, 2));
+	rig_free(&r);
+}
+
+TEST(engine_temperature_holds_the_table_near_a_bound)
+{
+	struct rig r;
+	int lo, hi;
+
+	rig_init(&r);
+	epd_engine_temp_range(r.e, &lo, &hi);
+	CHECK_EQ(lo, 0);
+	CHECK_EQ(hi, 20);
+	CHECK_EQ(epd_engine_set_temp_mc(r.e, 20500), 0);
+	CHECK_EQ(epd_engine_mode_frames(r.e, GC16, true), (int)fixture_frames(2, 0));
+	CHECK_EQ(epd_engine_set_temp_mc(r.e, 21000), 0);
+	CHECK_EQ(epd_engine_mode_frames(r.e, GC16, true), (int)fixture_frames(2, 1));
+	epd_engine_temp_range(r.e, &lo, &hi);
+	CHECK_EQ(lo, 20);
+	CHECK_EQ(hi, 30);
+	CHECK_EQ(epd_engine_set_temp_mc(r.e, 19500), 0);
+	CHECK_EQ(epd_engine_mode_frames(r.e, GC16, true), (int)fixture_frames(2, 1));
+	CHECK_EQ(epd_engine_set_temp_mc(r.e, 18000), 0);
+	CHECK_EQ(epd_engine_mode_frames(r.e, GC16, true), (int)fixture_frames(2, 0));
 	rig_free(&r);
 }
 
@@ -637,7 +660,7 @@ TEST(engine_tick_keeps_the_frame_when_a_waiting_update_is_dropped)
 	fill(&r, 12);
 	CHECK_EQ(submit(&r, 0, 0, W, H, GC16, true, 1), 0);
 	CHECK_EQ(submit(&r, 0, 0, 8, 1, 15, true, 2), 0);
-	CHECK_EQ(epd_engine_set_temp(r.e, 45), 0);
+	CHECK_EQ(epd_engine_set_temp_mc(r.e, 45000), 0);
 	for (f = 0; f < n; f++) {
 		CHECK_EQ(epd_engine_tick(r.e, r.frame), 1);
 		CHECK_EQ(drive_at(&r, 40, 3), fixture_drive(2, 0, (unsigned int)f, 24, 0));
@@ -659,7 +682,7 @@ TEST(engine_destroy_releases_pending_work)
 	CHECK_EQ(submit(&r, 0, 0, W, H, DU, true, 2), 0);
 	CHECK_EQ(submit(&r, 0, 0, W, H, A2, true, 3), 0);
 	CHECK_EQ(epd_engine_tick(r.e, r.frame), 1);
-	CHECK_EQ(epd_engine_set_temp(r.e, 40), 0);
+	CHECK_EQ(epd_engine_set_temp_mc(r.e, 40000), 0);
 	CHECK_EQ(epd_engine_set_cut(r.e, 1), 0);
 	rig_free(&r);
 	epd_engine_destroy(NULL);

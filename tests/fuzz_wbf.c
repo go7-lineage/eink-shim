@@ -87,7 +87,7 @@ static void check_engine(const u8 *wbf, size_t size, const u8 *ops, size_t nops)
 		if (ops[i + 3] & 1)
 			epd_engine_tick(e, frame);
 		if (ops[i + 3] & 2)
-			epd_engine_set_temp(e, ops[i + 2]);
+			epd_engine_set_temp_mc(e, ops[i + 2] * 1000);
 		if (ops[i + 3] & 4)
 			epd_engine_set_cut(e, ops[i + 1] % 8);
 	}

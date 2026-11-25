@@ -5,6 +5,7 @@
 #include "epd_port.h"
 
 #define EPD_MAX_FRAMES	1024
+#define EPD_TEMP_HYST_MC	1000
 
 struct epd_wbf {
 	const u8 *data;
@@ -31,6 +32,7 @@ static inline int epd_wbf_frames(const struct epd_wbf *w, int temp, int mode)
 int epd_wbf_decode(const struct epd_wbf *w, int temp, int mode, u8 *out, size_t cap);
 
 int epd_temp_index(const struct epd_wbf *w, int temp_c);
+int epd_temp_index_hyst(const struct epd_wbf *w, int cur, int temp_mc);
 int epd_wbf_fixup_variant(const struct epd_wbf *w, int slot);
 int epd_mode_slot(u8 mode_version, int onyx_mode);
 

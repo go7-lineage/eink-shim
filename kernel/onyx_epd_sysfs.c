@@ -58,6 +58,7 @@ static ssize_t status_show(struct device *dev, struct device_attribute *attr, ch
 	n = sysfs_emit(buf, "waveform %s, output %s, powered %d, frames %llu, swap_rg %d\n",
 		       p->eng ? "loaded" : "missing", epd_output_ready(p) ? "ready" : "waiting",
 		       p->powered, p->frames, epd_param_swap_rg);
+	n += epd_temp_emit(p, buf, n);
 	n += sysfs_emit_at(buf, n,
 			   "ui %s: commits %llu, updates %llu, passes %llu, rects %llu, diff %u us (max %u), cached %llu\n",
 			   !p->ui_ok ? "unavailable" : epd_param_ui ? epd_ui_mode_name(p->ui_cfg.mode) : "off",
