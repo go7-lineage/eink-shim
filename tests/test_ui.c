@@ -255,6 +255,175 @@ TEST(ui_gc_interval_counts_frames_after_quiet)
 	epd_ui_release(&r.ui);
 }
 
+TEST(ui_gc_interval_gc16_covers_only_rows_changed_since_the_last_gc16)
+{
+	struct ui_rig r;
+	u64 wait = 0;
+
+	ui_rig_init(&r, EPD_UI_SPEED);
+	r.cfg.gc_interval = 2;
+	CHECK_EQ(frame(&r, 0), 1);
+	CHECK_EQ(epd_ui_seed(&r.ui, r.fb, PITCH, LEN, 1), 0);
+	poke(&r, 9, 1);
+	CHECK_EQ(frame(&r, 1000), 1);
+	poke(&r, 17, 5);
+	CHECK_EQ(frame(&r, 2000), 1);
+	poke(&r, 1, 3);
+	CHECK_EQ(frame(&r, 3000), 3);
+	EXPECT_RECT(&r, 0, 8, 1, 8, 1, 2, 0x1000, 1);
+	EXPECT_RECT(&r, 1, 0, 3, 8, 1, 2, 0x1000, 1);
+	EXPECT_RECT(&r, 2, 16, 5, 8, 1, 2, 0x1000, 1);
+	CHECK_EQ(step(&r, 5000, &wait), EPD_UI_IDLE);
+
+	poke(&r, 1, 3);
+	CHECK_EQ(frame(&r, 6000), 1);
+	EXPECT_REQ(&r, 0, 3, 8, 1, 4, 0x2000, 0);
+	poke(&r, 25, 7);
+	CHECK_EQ(frame(&r, 7000), 1);
+	poke(&r, 1, 3);
+	CHECK_EQ(frame(&r, 8000), 2);
+	EXPECT_RECT(&r, 0, 0, 3, 8, 1, 2, 0x1000, 1);
+	EXPECT_RECT(&r, 1, 24, 7, 8, 1, 2, 0x1000, 1);
+	epd_ui_release(&r.ui);
+}
+
+TEST(ui_mode_change_gc16_stays_full_screen_with_few_dirty_rows)
+{
+	struct ui_rig r;
+
+	ui_rig_init(&r, EPD_UI_SPEED);
+	CHECK_EQ(frame(&r, 0), 1);
+	CHECK_EQ(epd_ui_seed(&r.ui, r.fb, PITCH, LEN, 1), 0);
+	poke(&r, 9, 1);
+	CHECK_EQ(frame(&r, 1000), 1);
+	r.cfg.mode = EPD_UI_REGAL;
+	poke(&r, 9, 1);
+	CHECK_EQ(frame(&r, 2000), 1);
+	EXPECT_REQ(&r, 0, 0, W, H, 2, 0x1000, 1);
+	epd_ui_release(&r.ui);
+}
+
+TEST(ui_gc_interval_gc16_is_full_screen_after_an_unreadable_frame)
+{
+	struct ui_rig r;
+
+	ui_rig_init(&r, EPD_UI_SPEED);
+	r.cfg.gc_interval = 2;
+	CHECK_EQ(frame(&r, 0), 1);
+	CHECK_EQ(epd_ui_seed(&r.ui, r.fb, PITCH, LEN, 1), 0);
+	r.n = epd_ui_frame(&r.ui, &r.cfg, r.fb, W * 4 - 1, LEN, 1000, r.req, &r.cut);
+	EXPECT_REQ(&r, 0, 0, W, H, 4, 0x2000, 0);
+	poke(&r, 9, 1);
+	CHECK_EQ(frame(&r, 2000), 1);
+	poke(&r, 9, 1);
+	CHECK_EQ(frame(&r, 3000), 1);
+	EXPECT_REQ(&r, 0, 0, W, H, 2, 0x1000, 1);
+
+	poke(&r, 9, 1);
+	CHECK_EQ(frame(&r, 4000), 1);
+	poke(&r, 9, 1);
+	CHECK_EQ(frame(&r, 5000), 1);
+	poke(&r, 9, 1);
+	CHECK_EQ(frame(&r, 6000), 1);
+	EXPECT_REQ(&r, 8, 1, 8, 1, 2, 0x1000, 1);
+	epd_ui_release(&r.ui);
+}
+
+TEST(ui_gc_interval_gc16_serves_a_pending_flash_full_screen)
+{
+	struct ui_rig r;
+	u64 wait = 0;
+
+	ui_rig_init(&r, EPD_UI_SPEED);
+	r.cfg.gc_interval = 1;
+	CHECK_EQ(frame(&r, 0), 1);
+	CHECK_EQ(epd_ui_seed(&r.ui, r.fb, PITCH, LEN, 1), 0);
+	poke(&r, 9, 1);
+	CHECK_EQ(frame(&r, 1000), 1);
+	CHECK_EQ(epd_ui_flash(&r.ui, 1900), 0);
+	poke(&r, 9, 1);
+	CHECK_EQ(frame(&r, 2000), 1);
+	EXPECT_REQ(&r, 0, 0, W, H, 2, 0x1000, 1);
+	CHECK_EQ(r.ui.flashes, 1);
+	CHECK_EQ(step(&r, 5000, &wait), EPD_UI_IDLE);
+	epd_ui_release(&r.ui);
+}
+
+TEST(ui_big_burst_pass_takes_its_rows_out_of_the_gc_interval_gc16)
+{
+	struct ui_rig r;
+	u64 wait = 0;
+
+	ui_rig_init(&r, EPD_UI_SPEED);
+	r.cfg.gc_interval = 3;
+	r.cfg.big_pct = 50;
+	CHECK_EQ(frame(&r, 0), 1);
+	CHECK_EQ(step(&r, 400, &wait), EPD_UI_SEND);
+	EXPECT_REQ(&r, 0, 0, W, H, 2, 0x1000, 1);
+	poke_rows(&r, 0, 10);
+	CHECK_EQ(frame(&r, 1000), 1);
+	CHECK_EQ(step(&r, 1400, &wait), EPD_UI_SEND);
+	EXPECT_REQ(&r, 0, 0, W, 10, 2, 0x1000, 1);
+	poke(&r, 9, 12);
+	CHECK_EQ(frame(&r, 2000), 1);
+	poke(&r, 9, 12);
+	CHECK_EQ(frame(&r, 3000), 1);
+	EXPECT_REQ(&r, 8, 12, 8, 1, 2, 0x1000, 1);
+	epd_ui_release(&r.ui);
+}
+
+TEST(ui_big_burst_pass_keeps_dirty_rows_reaching_outside_it)
+{
+	struct ui_rig r;
+	u64 wait = 0;
+	u32 y;
+
+	ui_rig_init(&r, EPD_UI_SPEED);
+	r.cfg.gc_interval = 3;
+	r.cfg.big_pct = 50;
+	CHECK_EQ(frame(&r, 0), 1);
+	CHECK_EQ(epd_ui_seed(&r.ui, r.fb, PITCH, LEN, 1), 0);
+	poke(&r, 9, 2);
+	CHECK_EQ(frame(&r, 1000), 1);
+	for (y = 0; y < H; y++)
+		poke_span(&r, 16, W, y);
+	CHECK_EQ(frame(&r, 2000), 1);
+	CHECK_EQ(step(&r, 2400, &wait), EPD_UI_SEND);
+	EXPECT_REQ(&r, 16, 0, 16, H, 2, 0x1000, 1);
+	poke(&r, 9, 2);
+	CHECK_EQ(frame(&r, 3000), 1);
+	poke(&r, 9, 2);
+	CHECK_EQ(frame(&r, 4000), 1);
+	EXPECT_REQ(&r, 8, 2, 24, 1, 2, 0x1000, 1);
+	epd_ui_release(&r.ui);
+}
+
+TEST(ui_full_screen_big_burst_pass_cleans_after_an_unreadable_frame)
+{
+	struct ui_rig r;
+	u64 wait = 0;
+
+	ui_rig_init(&r, EPD_UI_SPEED);
+	r.cfg.gc_interval = 3;
+	r.cfg.big_pct = 50;
+	CHECK_EQ(frame(&r, 0), 1);
+	CHECK_EQ(epd_ui_seed(&r.ui, r.fb, PITCH, LEN, 1), 0);
+	r.n = epd_ui_frame(&r.ui, &r.cfg, r.fb, W * 4 - 1, LEN, 1000, r.req, &r.cut);
+	EXPECT_REQ(&r, 0, 0, W, H, 4, 0x2000, 0);
+	poke_rows(&r, 0, 10);
+	CHECK_EQ(frame(&r, 1050), 1);
+	CHECK_EQ(step(&r, 1450, &wait), EPD_UI_SEND);
+	EXPECT_REQ(&r, 0, 0, W, H, 2, 0x1000, 1);
+	poke(&r, 9, 12);
+	CHECK_EQ(frame(&r, 2000), 1);
+	poke(&r, 9, 12);
+	CHECK_EQ(frame(&r, 3000), 1);
+	poke(&r, 9, 12);
+	CHECK_EQ(frame(&r, 4000), 1);
+	EXPECT_REQ(&r, 8, 12, 8, 1, 2, 0x1000, 1);
+	epd_ui_release(&r.ui);
+}
+
 TEST(ui_debounced_mode_settles_after_a_burst)
 {
 	struct ui_rig r;
@@ -759,7 +928,7 @@ TEST(ui_flash_restarts_the_gc_interval)
 	EXPECT_REQ(&r, 0, 0, 8, 1, 4, 0x2000, 0);
 	poke(&r, 0, 0);
 	CHECK_EQ(frame(&r, 4000), 1);
-	EXPECT_REQ(&r, 0, 0, W, H, 2, 0x1000, 1);
+	EXPECT_REQ(&r, 0, 0, 8, 1, 2, 0x1000, 1);
 	epd_ui_release(&r.ui);
 }
 
@@ -837,7 +1006,7 @@ TEST(ui_seed_restarts_the_gc_interval)
 	EXPECT_REQ(&r, 0, 0, 8, 1, 4, 0x2000, 0);
 	poke(&r, 0, 0);
 	CHECK_EQ(frame(&r, 2000), 1);
-	EXPECT_REQ(&r, 0, 0, W, H, 2, 0x1000, 1);
+	EXPECT_REQ(&r, 0, 0, 8, 1, 2, 0x1000, 1);
 	epd_ui_release(&r.ui);
 }
 

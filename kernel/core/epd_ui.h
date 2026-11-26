@@ -27,6 +27,8 @@ struct epd_ui {
 	struct epd_ui_span *burst;
 	struct epd_ui_span *transient;
 	bool untracked;
+	struct epd_ui_span *dirty;
+	bool dirty_all;
 	u32 burst_frames;
 	bool have_mode, have_frame;
 	int last_mode;

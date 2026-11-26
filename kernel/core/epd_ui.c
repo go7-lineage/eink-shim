@@ -76,7 +76,8 @@ int epd_ui_init(struct epd_ui *u, u32 w, u32 h)
 	u->rows = epd_zalloc(h * sizeof(*u->rows));
 	u->burst = epd_zalloc(h * sizeof(*u->burst));
 	u->transient = epd_zalloc(h * sizeof(*u->transient));
-	if (!u->shadow || !u->rows || !u->burst || !u->transient) {
+	u->dirty = epd_zalloc(h * sizeof(*u->dirty));
+	if (!u->shadow || !u->rows || !u->burst || !u->transient || !u->dirty) {
 		epd_ui_release(u);
 		return -ENOMEM;
 	}
@@ -90,10 +91,12 @@ void epd_ui_release(struct epd_ui *u)
 	epd_free(u->rows);
 	epd_free(u->burst);
 	epd_free(u->transient);
+	epd_free(u->dirty);
 	u->shadow = NULL;
 	u->rows = NULL;
 	u->burst = NULL;
 	u->transient = NULL;
+	u->dirty = NULL;
 }
 
 void epd_ui_invalidate(struct epd_ui *u)
@@ -181,6 +184,28 @@ static void ui_transient_reset(struct epd_ui *u)
 {
 	memset(u->transient, 0, u->h * sizeof(*u->transient));
 	u->untracked = false;
+}
+
+static void ui_dirty_reset(struct epd_ui *u)
+{
+	memset(u->dirty, 0, u->h * sizeof(*u->dirty));
+	u->dirty_all = false;
+}
+
+static void ui_dirty_clean(struct epd_ui *u, const struct epd_request *r, int n)
+{
+	int i;
+
+	for (i = 0; i < n; i++) {
+		u32 x0 = r[i].left, x1 = x0 + r[i].width, y0 = r[i].top, y1 = y0 + r[i].height, y;
+
+		for (y = y0; y < y1; y++) {
+			struct epd_ui_span *s = &u->dirty[y];
+
+			if (s->start >= x0 && s->end <= x1)
+				*s = (struct epd_ui_span){ 0, 0 };
+		}
+	}
 }
 
 struct ui_band {
@@ -355,14 +380,20 @@ static void ui_flash_done(struct epd_ui *u, u64 now)
 		u->flashes++;
 }
 
-static void ui_full_shown(struct epd_ui *u, u64 now)
+static void ui_gc16_shown(struct epd_ui *u)
 {
 	u->settle_mode = -1;
 	u->big_pending = false;
-	if (u->flash_pending)
-		ui_flash_done(u, now);
 	ui_burst_reset(u);
 	ui_transient_reset(u);
+	ui_dirty_reset(u);
+}
+
+static void ui_full_shown(struct epd_ui *u, u64 now)
+{
+	if (u->flash_pending)
+		ui_flash_done(u, now);
+	ui_gc16_shown(u);
 }
 
 int epd_ui_seed(struct epd_ui *u, const u8 *rgba, u32 pitch, size_t len, u64 now)
@@ -424,11 +455,18 @@ int epd_ui_frame(struct epd_ui *u, const struct epd_ui_cfg *cfg, const u8 *rgba,
 	marker = ui_marker(u);
 
 	if (d.kind == UI_GC16) {
-		ui_full_shown(u, now);
+		int n = 1;
+
+		if (d.mode_changed || !tracked || u->dirty_all || u->flash_pending) {
+			ui_full_shown(u, now);
+			ui_upd(out, 0, 0, u->w, u->h, UI_GC_WF, UI_GC_FLAG, true, marker);
+		} else {
+			n = ui_send(u, u->dirty, u->rows, UI_GC_WF, UI_GC_FLAG, true, marker, out);
+			ui_gc16_shown(u);
+		}
 		if (tracked)
 			ui_burst_merge(u);
-		ui_upd(out, 0, 0, u->w, u->h, UI_GC_WF, UI_GC_FLAG, true, marker);
-		return 1;
+		return n;
 	}
 	if (d.kind == UI_TRANSIENT) {
 		u->settle_mode = cfg->mode;
@@ -436,9 +474,11 @@ int epd_ui_frame(struct epd_ui *u, const struct epd_ui_cfg *cfg, const u8 *rgba,
 	}
 	if (!tracked) {
 		u->untracked = true;
+		u->dirty_all = true;
 		ui_upd(out, 0, 0, u->w, u->h, m->wf, m->flag, false, marker);
 		return 1;
 	}
+	ui_spans_merge(u->h, u->dirty, u->rows);
 	u->big_pending = ui_burst_add(u, d.new_burst, cfg->big_pct);
 	if (d.kind == UI_TRANSIENT)
 		ui_spans_merge(u->h, u->transient, u->rows);
@@ -448,7 +488,7 @@ int epd_ui_frame(struct epd_ui *u, const struct epd_ui_cfg *cfg, const u8 *rgba,
 enum epd_ui_step epd_ui_step(struct epd_ui *u, u64 now, struct epd_request *out, int *n, u64 *wait)
 {
 	const struct epd_ui_span *a, *b;
-	bool flash = u->flash_pending;
+	bool flash = u->flash_pending, gc16 = true;
 	int wf;
 	u32 flag;
 	u64 quiet;
@@ -467,6 +507,7 @@ enum epd_ui_step epd_ui_step(struct epd_ui *u, u64 now, struct epd_request *out,
 		a = u->burst;
 		b = u->transient;
 	} else if (u->settle_mode >= 0) {
+		gc16 = false;
 		wf = ui_mode(u->settle_mode)->wf;
 		flag = ui_mode(u->settle_mode)->flag;
 		quiet = UI_SETTLE_MS;
@@ -489,8 +530,12 @@ enum epd_ui_step epd_ui_step(struct epd_ui *u, u64 now, struct epd_request *out,
 	if (flash || u->untracked) {
 		ui_upd(out, 0, 0, u->w, u->h, wf, flag, true, ui_marker(u));
 		*n = 1;
+		if (gc16)
+			ui_dirty_reset(u);
 	} else {
 		*n = ui_send(u, a, b, wf, flag, true, ui_marker(u), out);
+		if (gc16)
+			ui_dirty_clean(u, out, *n);
 	}
 	ui_transient_reset(u);
 	return EPD_UI_SEND;
