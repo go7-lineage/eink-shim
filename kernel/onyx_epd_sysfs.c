@@ -3,6 +3,7 @@
 #include <linux/device.h>
 #include <linux/kernel.h>
 #include <linux/string.h>
+#include <linux/string_choices.h>
 #include <linux/vmalloc.h>
 
 #include "onyx_epd_drv.h"
@@ -44,7 +45,8 @@ static ssize_t status_show(struct device *dev, struct device_attribute *attr, ch
 {
 	struct onyx_epd *p = dev_get_drvdata(dev);
 	struct epd_ring ring;
-	bool busy;
+	bool busy, pmic, pmic_night, pmic_rb_ok;
+	u8 pmic_rb[EPD_PMIC_NREGS];
 	struct epd_sleep sl;
 	int n, queued;
 	u32 flashes, flash_drops;
@@ -52,6 +54,10 @@ static ssize_t status_show(struct device *dev, struct device_attribute *attr, ch
 	mutex_lock(&p->lock);
 	busy = p->eng && epd_engine_busy(p->eng);
 	queued = p->q.n;
+	pmic = !!p->pmic;
+	pmic_night = p->pmic_night;
+	pmic_rb_ok = p->pmic_rb_ok;
+	memcpy(pmic_rb, p->pmic_rb, sizeof(pmic_rb));
 	mutex_unlock(&p->lock);
 	spin_lock(&p->out_lock);
 	ring = p->ring;
@@ -86,6 +92,12 @@ static ssize_t status_show(struct device *dev, struct device_attribute *attr, ch
 	mutex_unlock(&p->in_lock);
 	n += sysfs_emit_at(buf, n, "sleep image %s, shown %llu, wake refreshes %llu, modesets skipped %llu\n",
 			   sl.image ? "loaded" : "missing", sl.n_shown, sl.n_full, sl.n_skipped);
+	n += sysfs_emit_at(buf, n, "pmic night: %s", pmic ? str_on_off(pmic_night) : "unavailable");
+	if (pmic && pmic_rb_ok)
+		n += sysfs_emit_at(buf, n, ", chip reads %*ph", EPD_PMIC_NREGS, pmic_rb);
+	else if (pmic)
+		n += sysfs_emit_at(buf, n, ", chip reads -");
+	n += sysfs_emit_at(buf, n, "\n");
 	return n;
 }
 static DEVICE_ATTR_RO(status);
@@ -121,7 +133,7 @@ static ssize_t ui_mode_store(struct device *dev, struct device_attribute *attr, 
 	if (mode < 0)
 		return mode;
 	mutex_lock(&p->in_lock);
-	p->ui_cfg.mode = mode;
+	WRITE_ONCE(p->ui_cfg.mode, mode);
 	epd_lut_refresh(p);
 	mutex_unlock(&p->in_lock);
 	return count;

@@ -25,6 +25,9 @@
 #include "core/epd_ui.h"
 
 struct onyx_epdc_upd;
+struct regmap;
+
+#define EPD_PMIC_NREGS	7
 
 #define EPD_W		1264
 #define EPD_H		1680
@@ -106,6 +109,11 @@ struct onyx_epd {
 	struct regulator *rail[EPD_NRAILS];
 	bool rail_on[EPD_NRAILS];
 	bool powered;
+	struct regmap *pmic;
+	bool pmic_night;
+	bool pmic_dirty;
+	bool pmic_rb_ok;
+	u8 pmic_rb[EPD_PMIC_NREGS];
 	struct delayed_work power_off;
 	struct delayed_work link_off;
 	struct delayed_work setup;

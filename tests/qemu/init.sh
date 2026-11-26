@@ -74,7 +74,7 @@ echo 300 > $S/cut_frame_num 2>/dev/null && fail "cut 300 accepted"
 echo 2 > $S/cut_frame_num && [ "$(cat $S/cut_frame_num)" = 2 ] || fail "cut 2"
 
 idle() {
-	wait_for 'settled && grep -q "link 0," $S/status' 30 || fail "not idle: $(tail -1 $S/status)"
+	wait_for 'settled && grep -q "link 0," $S/status' 30 || fail "not idle: $(grep "^engine busy" $S/status)"
 }
 frames() { fval frames; }
 dframes() { sed -n '1s/.*frames \([0-9]*\),.*/\1/p' $S/status; }
@@ -93,13 +93,13 @@ redraws() {
 	idle
 	f0=$(fval frames)
 	echo "$2" > $S/$1 || fail "$1 $2"
-	wait_for '[ "$(fval frames)" -gt "$f0" ] && settled' 30 || fail "$1 $2 did not redraw: $(tail -1 $S/status)"
+	wait_for '[ "$(fval frames)" -gt "$f0" ] && settled' 30 || fail "$1 $2 did not redraw: $(grep "^engine busy" $S/status)"
 }
 sleepval() { sed -n "/^sleep/s/.*$1 \([0-9]*\).*/\1/p" $S/status; }
 still() { held frames "$f0" "$1"; }
 unchanged() { held dframes "$d0" "$1"; }
 drawn() {
-	wait_for '[ "$(fval frames)" -gt "$f0" ] && settled' 30 || fail "$1 not drawn: $(tail -1 $S/status)"
+	wait_for '[ "$(fval frames)" -gt "$f0" ] && settled' 30 || fail "$1 not drawn: $(grep "^engine busy" $S/status)"
 }
 [ "$(cat $S/ui_gamma)" = 0 ] || fail "ui_gamma default $(cat $S/ui_gamma)"
 [ "$(cat $S/ui_levels)" = "0 100 255" ] || fail "ui_levels default $(cat $S/ui_levels)"
@@ -247,11 +247,21 @@ for m in 2 4 1 5 2 16 15 14 2 4 4 1 2 5 2 3 2; do
 	fi
 	if [ $((i % 6)) = 5 ]; then
 		d0=$(fval disables)
-		wait_for '[ "$(fval disables)" -gt "$d0" ]' 10 || fail "link stayed on after mode $m: $(tail -1 $S/status)"
+		wait_for '[ "$(fval disables)" -gt "$d0" ]' 10 || fail "link stayed on after mode $m: $(grep "^engine busy" $S/status)"
 	fi
 	i=$((i + 1))
 done
 log "modes: $(fake)"
+grep -q "^pmic night: unavailable$" $S/status || fail "pmic line: $(tail -1 $S/status)"
+[ "$(cat /sys/module/onyx_epd/parameters/night_pmic)" = N ] || fail "night_pmic default: $(cat /sys/module/onyx_epd/parameters/night_pmic)"
+echo 1 > /sys/module/onyx_epd/parameters/night_pmic || fail "night_pmic 1"
+echo night > $S/ui_mode
+pattern white
+pattern black
+echo speed > $S/ui_mode
+echo 0 > /sys/module/onyx_epd/parameters/night_pmic || fail "night_pmic 0"
+grep -q "^pmic night: unavailable$" $S/status || fail "pmic line after night: $(tail -1 $S/status)"
+log "night_pmic: $(fake)"
 
 echo devices > /sys/power/pm_test
 echo freeze > /sys/power/state || fail "suspend"

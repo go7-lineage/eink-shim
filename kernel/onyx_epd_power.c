@@ -2,6 +2,8 @@
 
 #include <linux/module.h>
 #include <linux/of.h>
+#include <linux/regmap.h>
+#include <linux/string_choices.h>
 #include <linux/device.h>
 #include <linux/regulator/consumer.h>
 
@@ -17,7 +19,50 @@ MODULE_PARM_DESC(hv, "switch the panel rails on for updates");
 static unsigned int idle_ms = 500;
 module_param(idle_ms, uint, 0644);
 
+static bool night_pmic;
+module_param(night_pmic, bool, 0644);
+MODULE_PARM_DESC(night_pmic, "night mode: stock FP9931 power-down timing, registers 4-10");
+
+#define EPD_PMIC_REG0	4
+
+static const u8 epd_pmic_night_on[EPD_PMIC_NREGS] = { 0x00, 0x00, 0x1e, 0x05, 0x00, 0x0f, 0xa5 };
+static const u8 epd_pmic_night_off[EPD_PMIC_NREGS];
+
 static const char *const epd_rail_names[EPD_NRAILS] = { "v3p3", "display", "vcom" };
+
+static void epd_pmic_night(struct onyx_epd *p)
+{
+	bool want = READ_ONCE(night_pmic) && READ_ONCE(p->ui_cfg.mode) == EPD_UI_NIGHT;
+	const u8 *v = want ? epd_pmic_night_on : epd_pmic_night_off;
+	unsigned int r;
+	int i, ret = 0;
+
+	if (!p->pmic || (want == p->pmic_night && !p->pmic_dirty))
+		return;
+	for (i = 0; i < EPD_PMIC_NREGS && !ret; i++)
+		ret = regmap_write(p->pmic, EPD_PMIC_REG0 + i, v[i]);
+	if (ret) {
+		p->pmic_dirty = true;
+		p->pmic_rb_ok = false;
+		drm_warn(&p->drm, "night PMIC timing %s: write of reg %d failed: %d\n", str_on_off(want),
+			 EPD_PMIC_REG0 + i - 1, ret);
+		return;
+	}
+	p->pmic_night = want;
+	p->pmic_dirty = false;
+	for (i = 0; i < EPD_PMIC_NREGS && !ret; i++) {
+		ret = regmap_read_bypassed(p->pmic, EPD_PMIC_REG0 + i, &r);
+		if (!ret)
+			p->pmic_rb[i] = (u8)r;
+	}
+	p->pmic_rb_ok = !ret;
+	if (p->pmic_rb_ok)
+		drm_info(&p->drm, "night PMIC timing %s: wrote %*ph, chip reads %*ph\n", str_on_off(want),
+			 EPD_PMIC_NREGS, v, EPD_PMIC_NREGS, p->pmic_rb);
+	else
+		drm_warn(&p->drm, "night PMIC timing %s: wrote %*ph, read-back of reg %d failed: %d\n",
+			 str_on_off(want), EPD_PMIC_NREGS, v, EPD_PMIC_REG0 + i - 1, ret);
+}
 
 void epd_power_up(struct onyx_epd *p)
 {
@@ -34,6 +79,8 @@ void epd_power_up(struct onyx_epd *p)
 		p->rail_on[i] = !regulator_enable(p->rail[i]);
 		if (!p->rail_on[i])
 			drm_warn(&p->drm, "%s on failed\n", epd_rail_names[i]);
+		else if (i == EPD_V3P3)
+			epd_pmic_night(p);
 	}
 	p->powered = true;
 	epd_stat(&p->st_power, t0);
@@ -115,6 +162,12 @@ int epd_power_init(struct onyx_epd *p)
 		p->rail[i] = epd_supply(dev, epd_rail_names[i]);
 		if (IS_ERR(p->rail[i]))
 			return dev_err_probe(dev, PTR_ERR(p->rail[i]), "%s-supply\n", epd_rail_names[i]);
+	}
+	if (p->rail[EPD_VCOM]) {
+		struct regmap *map = regulator_get_regmap(p->rail[EPD_VCOM]);
+		struct device *pd = IS_ERR(map) ? NULL : regmap_get_device(map);
+
+		p->pmic = pd && of_device_is_compatible(pd->of_node, "fitipower,fp9931") ? map : NULL;
 	}
 	epd_set_vcom(p);
 	return 0;
