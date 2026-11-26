@@ -121,13 +121,14 @@ class Png2GreyTest(unittest.TestCase):
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 png2grey.main(["--size", "2by2", src, out])
 
-    def test_placeholder_converts_to_the_panel_size(self):
-        with open(os.path.join(HERE, "placeholder.png"), "rb") as f:
-            grey = png2grey.convert(f.read(), 1264, 1680)
-        self.assertEqual(len(grey), 1264 * 1680)
-        self.assertEqual(min(grey[:700 * 1264]), 255)
-        self.assertEqual(min(grey[1000 * 1264:]), 255)
-        self.assertLess(min(grey[800 * 1264:880 * 1264]), 64)
+    def test_committed_images_convert_to_the_panel_size(self):
+        for name in ("placeholder.png", "poweroff.png"):
+            with self.subTest(name), open(os.path.join(HERE, name), "rb") as f:
+                grey = png2grey.convert(f.read(), 1264, 1680)
+                self.assertEqual(len(grey), 1264 * 1680)
+                self.assertEqual(min(grey[:700 * 1264]), 255)
+                self.assertEqual(min(grey[1000 * 1264:]), 255)
+                self.assertLess(min(grey[800 * 1264:880 * 1264]), 64)
 
 
 if __name__ == "__main__":

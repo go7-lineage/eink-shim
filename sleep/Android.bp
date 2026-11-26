@@ -17,3 +17,17 @@ prebuilt_firmware {
     src: ":eink_sleep_grey",
     vendor: true,
 }
+
+genrule {
+    name: "eink_poweroff_grey",
+    tools: ["eink_png2grey"],
+    srcs: ["poweroff.png"],
+    out: ["eink_poweroff.gray"],
+    cmd: "$(location eink_png2grey) --size 1264x1680 $(in) $(out)",
+}
+
+prebuilt_firmware {
+    name: "eink_poweroff.gray",
+    src: ":eink_poweroff_grey",
+    vendor: true,
+}
