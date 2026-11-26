@@ -308,7 +308,7 @@ static int merge(struct epd_engine *e, struct epd_req *r)
 	struct epd_table *table, *aa_table = NULL;
 	struct claim c = { .y0 = 0xffff, .x0 = 0xffff }, ca = { .lut = -1, .y0 = 0xffff, .x0 = 0xffff };
 	struct claim busy = { .lut = -1, .y0 = 0xffff, .x0 = 0xffff };
-	bool aa = e->cfg.regal_aa && epd_mode_is_regal(u->mode), older = older_overlaps(e, r);
+	bool aa = e->cfg.regal_aa && epd_mode_has_aa(u->mode), older = older_overlaps(e, r);
 	int ret;
 	u32 x, y;
 

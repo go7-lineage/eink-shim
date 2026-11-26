@@ -41,4 +41,9 @@ static inline bool epd_mode_is_regal(int onyx_mode)
 	return onyx_mode == 5 || onyx_mode == 15 || onyx_mode == 16;
 }
 
+static inline bool epd_mode_has_aa(int onyx_mode)
+{
+	return onyx_mode == 5 || onyx_mode == 16;
+}
+
 #endif

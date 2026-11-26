@@ -442,6 +442,8 @@ TEST(wbf_mode_slot)
 	CHECK_EQ(epd_mode_slot(25, 15), 9);
 	CHECK(epd_mode_is_regal(5) && epd_mode_is_regal(15) && epd_mode_is_regal(16));
 	CHECK(!epd_mode_is_regal(2) && !epd_mode_is_regal(4));
+	CHECK(epd_mode_has_aa(5) && epd_mode_has_aa(16));
+	CHECK(!epd_mode_has_aa(15) && !epd_mode_has_aa(2) && !epd_mode_has_aa(4));
 }
 
 TEST(wbf_fixup_variant)

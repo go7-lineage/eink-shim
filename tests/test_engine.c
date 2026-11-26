@@ -11,6 +11,7 @@
 #define DU	1
 #define A2	4
 #define REGAL	5
+#define NIGHT	15
 
 struct rig {
 	struct epd_engine *e;
@@ -544,6 +545,17 @@ TEST(engine_regal_redrives_white_next_to_dark)
 
 	regal_scene(&r, false);
 	CHECK_EQ(submit(&r, 0, 0, W, H, REGAL, false, 1), 0);
+	CHECK(!epd_engine_busy(r.e));
+	CHECK_EQ(r.ndone, 1);
+	rig_free(&r);
+}
+
+TEST(engine_night_regal_has_no_edge_pulse)
+{
+	struct rig r;
+
+	regal_scene(&r, true);
+	CHECK_EQ(submit(&r, 0, 0, W, H, NIGHT, false, 1), 0);
 	CHECK(!epd_engine_busy(r.e));
 	CHECK_EQ(r.ndone, 1);
 	rig_free(&r);
