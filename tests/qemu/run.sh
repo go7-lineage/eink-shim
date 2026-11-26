@@ -39,6 +39,7 @@ cp "$T/kmsfill" "$root/bin/kmsfill"
 cp "$T/hwcseq" "$root/bin/hwcseq"
 "$T/mkwbf" "$root/lib/firmware/eink_waveform.wbf"
 head -c $((1264 * 1680)) /dev/zero | tr '\0' '\200' > "$root/lib/firmware/eink_sleep.gray"
+head -c $((1264 * 1680)) /dev/zero | tr '\0' '\100' > "$root/lib/firmware/eink_poweroff.gray"
 cp "$here/init.sh" "$root/init"
 chmod +x "$root/init"
 (cd "$root" && find . | $Q cpio -o -H newc --quiet | gzip) > "$T/initrd.gz"
@@ -46,6 +47,9 @@ chmod +x "$root/init"
 timeout "$SECS" $Q qemu-system-aarch64 "${M[@]}" -dtb "$T/test.dtb" -kernel "$KOUT/arch/arm64/boot/Image" \
 	-initrd "$T/initrd.gz" -append "console=ttyAMA0 rdinit=/init loglevel=7 fp9931:vcom=-1840000" \
 	> "$T/console.log" 2>&1 || true
-grep -a -E 'epd-test:|WARNING:|BUG:|KASAN|Unable to handle|Oops|possible circular|INFO: task' "$T/console.log" || true
+grep -a -E 'epd-test:|power-off image shown|WARNING:|BUG:|KASAN|Unable to handle|Oops|possible circular|INFO: task' "$T/console.log" || true
 cp "$T/console.log" "${CONSOLE_LOG:-/tmp/epd-qemu-console.log}"
 grep -a -q '^epd-test: RESULT ok' "$T/console.log"
+sed -n '/^epd-test: RESULT/,$p' "$T/console.log" > "$T/off.log"
+grep -a -q 'power-off image shown in' "$T/off.log" || { echo "epd-test: FAIL no power-off image at poweroff"; exit 1; }
+! grep -a -E 'WARNING:|BUG:|KASAN|Unable to handle|Oops|possible circular|INFO: task|still busy' "$T/off.log"

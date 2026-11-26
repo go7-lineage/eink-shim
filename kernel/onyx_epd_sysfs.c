@@ -45,7 +45,7 @@ static ssize_t status_show(struct device *dev, struct device_attribute *attr, ch
 {
 	struct onyx_epd *p = dev_get_drvdata(dev);
 	struct epd_ring ring;
-	bool busy, pmic, pmic_night, pmic_rb_ok;
+	bool busy, pmic, pmic_night, pmic_rb_ok, poweroff;
 	u8 pmic_rb[EPD_PMIC_NREGS];
 	struct epd_sleep sl;
 	int n, queued;
@@ -89,9 +89,12 @@ static ssize_t status_show(struct device *dev, struct device_attribute *attr, ch
 			   ring.shown, ring.inflight, ring.pending, ring.filling, ring.link_req);
 	mutex_lock(&p->in_lock);
 	sl = p->sleep;
+	poweroff = !!p->poweroff_fw;
 	mutex_unlock(&p->in_lock);
 	n += sysfs_emit_at(buf, n, "sleep image %s, shown %llu, wake refreshes %llu, modesets skipped %llu\n",
 			   sl.image ? "loaded" : "missing", sl.n_shown, sl.n_full, sl.n_skipped);
+	n += sysfs_emit_at(buf, n, "power-off image %s, shutdown %d\n", poweroff ? "loaded" : "missing",
+			   sl.shutdown);
 	n += sysfs_emit_at(buf, n, "pmic night: %s", pmic ? str_on_off(pmic_night) : "unavailable");
 	if (pmic && pmic_rb_ok)
 		n += sysfs_emit_at(buf, n, ", chip reads %*ph", EPD_PMIC_NREGS, pmic_rb);
@@ -271,6 +274,21 @@ static ssize_t ui_flash_store(struct device *dev, struct device_attribute *attr,
 }
 static DEVICE_ATTR_WO(ui_flash);
 
+static ssize_t shutdown_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
+{
+	struct onyx_epd *p = dev_get_drvdata(dev);
+	bool v;
+	int ret = kstrtobool(buf, &v);
+
+	if (ret)
+		return ret;
+	mutex_lock(&p->in_lock);
+	p->sleep.shutdown = v;
+	mutex_unlock(&p->in_lock);
+	return count;
+}
+static DEVICE_ATTR_WO(shutdown);
+
 static struct attribute *epd_attrs[] = {
 	&dev_attr_cut_frame_num.attr,
 	&dev_attr_test_pattern.attr,
@@ -282,6 +300,7 @@ static struct attribute *epd_attrs[] = {
 	&dev_attr_ui_gamma.attr,
 	&dev_attr_ui_levels.attr,
 	&dev_attr_ui_flash.attr,
+	&dev_attr_shutdown.attr,
 	NULL
 };
 

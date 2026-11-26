@@ -41,3 +41,6 @@ on property:persist.vendor.eink_shim.gamma=*
 
 on property:persist.vendor.eink_shim.levels=*
     write /sys/devices/virtual/sepdc/debug/ui_levels ${persist.vendor.eink_shim.levels}
+
+on shutdown
+    write /sys/devices/virtual/sepdc/debug/shutdown 1

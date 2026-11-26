@@ -113,3 +113,19 @@ TEST(sleep_boot_modeset_with_an_image_is_skipped_without_a_refresh)
 	CHECK_EQ(epd_sleep_frame(&s, false), EPD_SLEEP_NORMAL);
 	CHECK_EQ(s.n_full, 0);
 }
+
+TEST(sleep_off_during_shutdown_draws_nothing)
+{
+	struct epd_sleep s;
+
+	memset(&s, 0, sizeof(s));
+	s.image = true;
+	s.shutdown = true;
+	CHECK(!epd_sleep_off(&s));
+	CHECK_EQ(s.n_shown, 0);
+	CHECK(epd_sleep_can_resend(&s));
+	CHECK_EQ(epd_sleep_frame(&s, false), EPD_SLEEP_NORMAL);
+	s.shutdown = false;
+	CHECK(epd_sleep_off(&s));
+	CHECK_EQ(s.n_shown, 1);
+}

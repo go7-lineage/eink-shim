@@ -8,7 +8,7 @@ bool epd_sleep_image_ok(size_t size, u32 w, u32 h)
 
 bool epd_sleep_off(struct epd_sleep *s)
 {
-	if (!s->image || s->shown)
+	if (!s->image || s->shown || s->shutdown)
 		return false;
 	s->shown = true;
 	s->n_shown++;

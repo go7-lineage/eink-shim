@@ -10,6 +10,7 @@ struct epd_sleep {
 	bool image;
 	bool shown;
 	bool blank;
+	bool shutdown;
 	u64 n_shown, n_full, n_skipped;
 };
 

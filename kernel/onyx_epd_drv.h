@@ -59,6 +59,7 @@ struct onyx_epd {
 	struct epd_engine *eng;
 	const struct firmware *fw;
 	const struct firmware *sleep_fw;
+	const struct firmware *poweroff_fw;
 	struct epd_policy pol;
 	struct epd_queue q;
 	u8 *grey;
@@ -105,6 +106,7 @@ struct onyx_epd {
 	bool kick;
 	bool suspended;
 	struct notifier_block pm_nb;
+	struct notifier_block reboot_nb;
 
 	struct regulator *rail[EPD_NRAILS];
 	bool rail_on[EPD_NRAILS];

@@ -12,6 +12,7 @@
 #include <linux/of_graph.h>
 #include <linux/of_platform.h>
 #include <linux/platform_device.h>
+#include <linux/reboot.h>
 #include <linux/device.h>
 #include <linux/sched/topology.h>
 #include <linux/slab.h>
@@ -30,6 +31,7 @@ module_param(waveform, charp, 0444);
 MODULE_PARM_DESC(waveform, "waveform file");
 
 #define EPD_SLEEP_IMAGE	"eink_sleep.gray"
+#define EPD_POWEROFF_IMAGE	"eink_poweroff.gray"
 
 void epd_stat(struct epd_stat *s, u64 t0)
 {
@@ -116,23 +118,32 @@ static int epd_thread(void *data)
 
 static void epd_marker_done(void *ctx, u32 marker) { }
 
-static void epd_load_sleep(struct onyx_epd *p)
+static const struct firmware *epd_load_image(struct onyx_epd *p, const char *name)
 {
 	const struct firmware *fw;
-	int ret = request_firmware_direct(&fw, EPD_SLEEP_IMAGE, p->drm.dev);
+	int ret = request_firmware_direct(&fw, name, p->drm.dev);
 
 	if (ret) {
-		drm_info(&p->drm, "no sleep image %s: %d\n", EPD_SLEEP_IMAGE, ret);
-		return;
+		drm_info(&p->drm, "no image %s: %d\n", name, ret);
+		return NULL;
 	}
 	if (!epd_sleep_image_ok(fw->size, EPD_W, EPD_H)) {
-		drm_warn(&p->drm, "sleep image %s is %zu bytes, want %d\n", EPD_SLEEP_IMAGE, fw->size, EPD_W * EPD_H);
+		drm_warn(&p->drm, "image %s is %zu bytes, want %d\n", name, fw->size, EPD_W * EPD_H);
 		release_firmware(fw);
-		return;
+		return NULL;
 	}
+	return fw;
+}
+
+static void epd_load_images(struct onyx_epd *p)
+{
+	const struct firmware *sleep = epd_load_image(p, EPD_SLEEP_IMAGE);
+	const struct firmware *poweroff = epd_load_image(p, EPD_POWEROFF_IMAGE);
+
 	mutex_lock(&p->in_lock);
-	p->sleep_fw = fw;
-	p->sleep.image = true;
+	p->sleep_fw = sleep;
+	p->sleep.image = !!sleep;
+	p->poweroff_fw = poweroff;
 	mutex_unlock(&p->in_lock);
 }
 
@@ -164,7 +175,7 @@ static void epd_setup_work(struct work_struct *w)
 				epd_engine_set_temp_mc(eng, p->temp_mc);
 				mutex_unlock(&p->lock);
 				drm_info(&p->drm, "waveform %s loaded\n", waveform);
-				epd_load_sleep(p);
+				epd_load_images(p);
 			} else {
 				drm_err(&p->drm, "bad waveform %s: %d\n", waveform, ret);
 				release_firmware(fw);
@@ -182,10 +193,11 @@ static void epd_setup_work(struct work_struct *w)
 }
 
 #define EPD_SUSPEND_WAIT_MS	2000
+#define EPD_POWEROFF_WAIT_MS	5000
 
-static void epd_hold(struct onyx_epd *p)
+static bool epd_hold(struct onyx_epd *p, unsigned int wait_ms, const char *why)
 {
-	ktime_t t0 = ktime_get(), end = ktime_add_ms(t0, EPD_SUSPEND_WAIT_MS);
+	ktime_t t0 = ktime_get(), end = ktime_add_ms(t0, wait_ms);
 	u64 frames0 = READ_ONCE(p->frames);
 	bool engine, busy;
 	int queued;
@@ -204,8 +216,8 @@ static void epd_hold(struct onyx_epd *p)
 		usleep_range(10000, 11000);
 	}
 	if (busy && epd_output_ready(p))
-		drm_warn(&p->drm, "suspend: still busy after %lld ms (engine %d, queued %d, frames %llu -> %llu, link %d)\n",
-			 ktime_ms_delta(ktime_get(), t0), engine, queued, frames0,
+		drm_warn(&p->drm, "%s: still busy after %lld ms (engine %d, queued %d, frames %llu -> %llu, link %d)\n",
+			 why, ktime_ms_delta(ktime_get(), t0), engine, queued, frames0,
 			 READ_ONCE(p->frames), READ_ONCE(p->link_on));
 	spin_lock(&p->out_lock);
 	p->ring.link_req = false;
@@ -216,6 +228,7 @@ static void epd_hold(struct onyx_epd *p)
 	epd_power_down(p);
 	mutex_unlock(&p->lock);
 	epd_link_off(p);
+	return !busy;
 }
 
 static void epd_release(struct onyx_epd *p)
@@ -235,7 +248,7 @@ static int epd_pm_notify(struct notifier_block *nb, unsigned long action, void *
 	case PM_SUSPEND_PREPARE:
 	case PM_HIBERNATION_PREPARE:
 	case PM_RESTORE_PREPARE:
-		epd_hold(p);
+		epd_hold(p, EPD_SUSPEND_WAIT_MS, "suspend");
 		break;
 	case PM_POST_SUSPEND:
 	case PM_POST_HIBERNATION:
@@ -246,9 +259,32 @@ static int epd_pm_notify(struct notifier_block *nb, unsigned long action, void *
 	return NOTIFY_DONE;
 }
 
+static int epd_reboot_notify(struct notifier_block *nb, unsigned long action, void *data)
+{
+	struct onyx_epd *p = container_of(nb, struct onyx_epd, reboot_nb);
+	u64 frames0 = READ_ONCE(p->frames);
+	ktime_t t0 = ktime_get();
+	struct epd_request r;
+	bool drawn = false;
+
+	mutex_lock(&p->in_lock);
+	if (p->poweroff_fw && epd_output_ready(p)) {
+		epd_ui_gc_request(&r, EPD_W, EPD_H);
+		epd_link_hint(p);
+		epd_submit_grey(p, &r, p->poweroff_fw->data);
+		drawn = true;
+	}
+	mutex_unlock(&p->in_lock);
+	wake_up(&p->wq);
+	if (epd_hold(p, EPD_POWEROFF_WAIT_MS, "power-off") && drawn)
+		drm_info(&p->drm, "power-off image shown in %lld ms, %llu frames\n",
+			 ktime_ms_delta(ktime_get(), t0), READ_ONCE(p->frames) - frames0);
+	return NOTIFY_DONE;
+}
+
 static int onyx_epd_suspend(struct device *dev)
 {
-	epd_hold(dev_get_drvdata(dev));
+	epd_hold(dev_get_drvdata(dev), EPD_SUSPEND_WAIT_MS, "suspend");
 	return 0;
 }
 
@@ -431,13 +467,19 @@ static int onyx_epd_probe(struct platform_device *pdev)
 	ret = register_pm_notifier(&p->pm_nb);
 	if (ret)
 		goto err_sysdev;
-	ret = drm_dev_register(&p->drm, 0);
+	p->reboot_nb.notifier_call = epd_reboot_notify;
+	ret = register_reboot_notifier(&p->reboot_nb);
 	if (ret)
 		goto err_pm;
+	ret = drm_dev_register(&p->drm, 0);
+	if (ret)
+		goto err_reboot;
 	schedule_delayed_work(&p->setup, 0);
 	epd_temp_start(p);
 	return 0;
 
+err_reboot:
+	unregister_reboot_notifier(&p->reboot_nb);
 err_pm:
 	unregister_pm_notifier(&p->pm_nb);
 err_sysdev:
@@ -459,6 +501,7 @@ static void onyx_epd_remove(struct platform_device *pdev)
 	struct onyx_epd *p = platform_get_drvdata(pdev);
 	int i;
 
+	unregister_reboot_notifier(&p->reboot_nb);
 	unregister_pm_notifier(&p->pm_nb);
 	device_unregister(p->sysdev);
 	class_destroy(p->cls);
@@ -480,6 +523,7 @@ static void onyx_epd_remove(struct platform_device *pdev)
 	epd_engine_destroy(p->eng);
 	release_firmware(p->fw);
 	release_firmware(p->sleep_fw);
+	release_firmware(p->poweroff_fw);
 	drm_atomic_helper_shutdown(&p->drm);
 	wakeup_source_unregister(p->ws);
 }

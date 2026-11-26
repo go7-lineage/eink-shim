@@ -44,6 +44,7 @@ log "start"
 load
 log "loaded: $(fake)"
 grep -q "^sleep image loaded" $S/status || fail "sleep image: $(grep '^sleep' $S/status)"
+grep -q "^power-off image loaded, shutdown 0" $S/status || fail "power-off image: $(grep '^power-off' $S/status)"
 grep -q "usercode" /sys/bus/i2c/devices/*-003c/chipid || fail "tcon chipid"
 wait_for 'grep -q "temperature 24000 mC from temp_c (qcom_qg: -19), waveform range 20-30 C" $S/status' 5 ||
 	fail "temperature: $(grep temperature $S/status)"
@@ -216,6 +217,34 @@ composer_cycle() {
 	log "composer cycle, image $1: $(grep '^sleep' $S/status)"
 }
 composer_cycle loaded
+shutdown_cycle() {
+	echo x > $S/shutdown 2>/dev/null && fail "shutdown x accepted"
+	echo 1 > $S/shutdown || fail "shutdown 1"
+	grep -q "^power-off image loaded, shutdown 1" $S/status || fail "shutdown flag: $(grep '^power-off' $S/status)"
+	s0=$(sleepval shown)
+	idle
+	hwc_start
+	f0=$(fval frames)
+	hwc on || fail "modeset during shutdown: $(tail -1 /hwc.log)"
+	hwc "frame 64" || fail "frame during shutdown: $(tail -1 /hwc.log)"
+	drawn "a composer frame during shutdown"
+	idle
+	f0=$(fval frames)
+	hwc off || fail "power-off commit during shutdown: $(tail -1 /hwc.log)"
+	still "the composer's power-off commit during shutdown"
+	hwc on || fail "second modeset during shutdown: $(tail -1 /hwc.log)"
+	hwc "frame 192" || fail "second frame during shutdown: $(tail -1 /hwc.log)"
+	drawn "a second composer frame during shutdown"
+	idle
+	f0=$(fval frames)
+	hwc_stop
+	still "the composer's exit during shutdown"
+	[ "$(sleepval shown)" = "$s0" ] || fail "sleep image shown during shutdown: $s0 -> $(sleepval shown)"
+	echo 0 > $S/shutdown || fail "shutdown 0"
+	grep -q "^power-off image loaded, shutdown 0" $S/status || fail "shutdown flag: $(grep '^power-off' $S/status)"
+	log "shutdown: $(grep '^power-off' $S/status)"
+}
+shutdown_cycle
 rm /lib/firmware/eink_sleep.gray
 unload
 load
@@ -295,6 +324,10 @@ supplier_cycle() {
 supplier_cycle "rmmod panel_onyx_go7_eink" "insmod /lib/modules/panel-onyx-go7-eink.ko"
 supplier_cycle "rmmod onyx_go7_tcon" "insmod /lib/modules/onyx-go7-tcon.ko"
 unload
+load
+pattern stripes
+echo 1 > $S/shutdown || fail "shutdown 1 before power-off"
+log "power-off with onyx-epd bound: $(grep '^power-off' $S/status)"
 
 n=$(dmesg | grep -c -E 'WARNING:|BUG:|KASAN|Unable to handle|Oops|possible circular|INFO: task|unbalanced')
 [ "$n" = 0 ] || { fail "$n kernel complaints"; dmesg | grep -E -A3 'WARNING:|BUG:|KASAN|Unable to handle|Oops|possible circular|unbalanced' | head -40; }
