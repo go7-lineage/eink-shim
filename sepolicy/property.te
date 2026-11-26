@@ -1,0 +1,4 @@
+# persist.vendor.eink_shim.* (QS tile, Settings); the .mode type is public (patches/system_sepolicy)
+vendor_internal_prop(vendor_eink_shim_prop)
+# vendor.hwc.drm.device, set by init.eink_shim.drm.sh, read by drm_hwcomposer
+vendor_internal_prop(vendor_hwc_drm_prop)

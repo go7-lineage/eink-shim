@@ -1,0 +1,5 @@
+persist.vendor.eink_shim.        u:object_r:vendor_eink_shim_prop:s0
+persist.vendor.eink_shim.mode    u:object_r:vendor_eink_shim_mode_prop:s0 exact string
+persist.vendor.eink_shim.gamma   u:object_r:vendor_eink_shim_mode_prop:s0 exact string
+persist.vendor.eink_shim.levels  u:object_r:vendor_eink_shim_mode_prop:s0 exact string
+vendor.hwc.drm.device            u:object_r:vendor_hwc_drm_prop:s0 exact string

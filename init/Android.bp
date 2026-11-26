@@ -1,0 +1,12 @@
+prebuilt_etc {
+    name: "init.eink_shim.rc",
+    src: "init.eink_shim.rc",
+    sub_dir: "init",
+    vendor: true,
+}
+
+sh_binary {
+    name: "init.eink_shim.drm.sh",
+    src: "init.eink_shim.drm.sh",
+    vendor: true,
+}

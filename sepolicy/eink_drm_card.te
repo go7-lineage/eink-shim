@@ -1,0 +1,11 @@
+# init.eink_shim.drm.sh: finds the onyx-epd DRM card in sysfs, sets vendor.hwc.drm.device
+type eink_drm_card, domain;
+type eink_drm_card_exec, exec_type, vendor_file_type, file_type;
+init_daemon_domain(eink_drm_card)
+
+allow eink_drm_card vendor_shell_exec:file rx_file_perms;
+allow eink_drm_card vendor_toolbox_exec:file rx_file_perms;
+# /sys/class/drm/cardN/device/driver links
+r_dir_file(eink_drm_card, sysfs)
+r_dir_file(eink_drm_card, sysfs_gpu)
+set_prop(eink_drm_card, vendor_hwc_drm_prop)

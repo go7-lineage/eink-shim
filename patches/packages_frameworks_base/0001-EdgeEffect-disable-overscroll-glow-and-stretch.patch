@@ -1,0 +1,22 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Go7 port <go7-port@example.invalid>
+Date: Sun, 1 Nov 2026 12:00:00 +0000
+Subject: [PATCH] EdgeEffect: disable overscroll glow and stretch
+---
+diff --git a/core/java/android/widget/EdgeEffect.java b/core/java/android/widget/EdgeEffect.java
+index c110ab9..f398613 100644
+--- a/core/java/android/widget/EdgeEffect.java
++++ b/core/java/android/widget/EdgeEffect.java
+@@ -257,11 +257,7 @@ public class EdgeEffect {
+ 
+     @EdgeEffectType
+     private int getCurrentEdgeEffectBehavior() {
+-        if (!ValueAnimator.areAnimatorsEnabled()) {
+-            return TYPE_NONE;
+-        } else {
+-            return mEdgeEffectType;
+-        }
++        return TYPE_NONE;
+     }
+ 
+     /**

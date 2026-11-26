@@ -1,0 +1,3 @@
+# init.eink_shim.rc maps persist.vendor.eink_shim.* to the onyx-epd UI policy
+allow vendor_init sysfs_sepdc:file w_file_perms;
+get_prop(vendor_init, vendor_eink_shim_mode_prop)

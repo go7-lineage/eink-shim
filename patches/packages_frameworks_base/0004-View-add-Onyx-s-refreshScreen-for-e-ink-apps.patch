@@ -1,0 +1,185 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Go7 port <go7-port@example.invalid>
+Date: Wed, 25 Nov 2026 20:00:00 +0000
+Subject: [PATCH] View: add Onyx's refreshScreen for e-ink apps
+
+KOReader and other apps written for Onyx's firmware call the hidden
+View.refreshScreen(mode) and refreshScreen(left, top, width, height,
+mode) by reflection to flash the e-ink panel. Requests with the FULL
+bit (32) or the GC16 waveform (2) go to a small system_server service,
+eink_refresh, which writes 1 to the onyx-epd driver's ui_flash node.
+Every other mode is ignored. The service type comes with the matching
+system/sepolicy patch.
+---
+ core/java/android/view/EinkRefresh.java       | 46 +++++++++++++++++++
+ core/java/android/view/IEinkRefresh.aidl      |  6 +++
+ core/java/android/view/View.java              | 12 +++++
+ .../server/eink/EinkRefreshService.java       | 43 +++++++++++++++++
+ .../java/com/android/server/SystemServer.java |  5 ++
+ 5 files changed, 112 insertions(+)
+ create mode 100644 core/java/android/view/EinkRefresh.java
+ create mode 100644 core/java/android/view/IEinkRefresh.aidl
+ create mode 100644 services/core/java/com/android/server/eink/EinkRefreshService.java
+
+diff --git a/core/java/android/view/EinkRefresh.java b/core/java/android/view/EinkRefresh.java
+new file mode 100644
+index 000000000..f1fb4cb42
+--- /dev/null
++++ b/core/java/android/view/EinkRefresh.java
+@@ -0,0 +1,46 @@
++package android.view;
++
++import android.os.IBinder;
++import android.os.RemoteException;
++import android.os.ServiceManager;
++
++final class EinkRefresh {
++    private static final String SERVICE = "eink_refresh";
++    private static final int UPDATE_FULL = 32;
++    private static final int WAVEFORM_MASK = 15;
++    private static final int WAVEFORM_GC16 = 2;
++
++    private static IEinkRefresh sService;
++
++    private EinkRefresh() {
++    }
++
++    static void request(int mode) {
++        if ((mode & UPDATE_FULL) == 0 && (mode & WAVEFORM_MASK) != WAVEFORM_GC16) {
++            return;
++        }
++        IEinkRefresh service = service();
++        if (service == null) {
++            return;
++        }
++        try {
++            service.flash();
++        } catch (RemoteException e) {
++            forget();
++        }
++    }
++
++    private static synchronized IEinkRefresh service() {
++        if (sService == null) {
++            IBinder binder = ServiceManager.checkService(SERVICE);
++            if (binder != null) {
++                sService = IEinkRefresh.Stub.asInterface(binder);
++            }
++        }
++        return sService;
++    }
++
++    private static synchronized void forget() {
++        sService = null;
++    }
++}
+diff --git a/core/java/android/view/IEinkRefresh.aidl b/core/java/android/view/IEinkRefresh.aidl
+new file mode 100644
+index 000000000..45581d0a7
+--- /dev/null
++++ b/core/java/android/view/IEinkRefresh.aidl
+@@ -0,0 +1,6 @@
++package android.view;
++
++/** @hide */
++oneway interface IEinkRefresh {
++    void flash();
++}
+diff --git a/core/java/android/view/View.java b/core/java/android/view/View.java
+index 50b7ad768..97d3a3af2 100644
+--- a/core/java/android/view/View.java
++++ b/core/java/android/view/View.java
+@@ -34901,6 +34901,18 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
+         return null;
+     }
+ 
++    /** @hide */
++    @UnsupportedAppUsage
++    public void refreshScreen(int mode) {
++        EinkRefresh.request(mode);
++    }
++
++    /** @hide */
++    @UnsupportedAppUsage
++    public void refreshScreen(int left, int top, int width, int height, int mode) {
++        EinkRefresh.request(mode);
++    }
++
+     /**
+      * Used to calculate the frame rate category of a View.
+      *
+diff --git a/services/core/java/com/android/server/eink/EinkRefreshService.java b/services/core/java/com/android/server/eink/EinkRefreshService.java
+new file mode 100644
+index 000000000..22a615644
+--- /dev/null
++++ b/services/core/java/com/android/server/eink/EinkRefreshService.java
+@@ -0,0 +1,43 @@
++package com.android.server.eink;
++
++import android.content.Context;
++import android.util.Slog;
++import android.view.IEinkRefresh;
++
++import com.android.server.SystemService;
++
++import java.io.FileOutputStream;
++import java.io.IOException;
++
++public final class EinkRefreshService extends SystemService {
++    private static final String TAG = "EinkRefreshService";
++    private static final String SERVICE = "eink_refresh";
++    private static final String NODE = "/sys/devices/virtual/sepdc/debug/ui_flash";
++
++    private boolean mWarned;
++
++    public EinkRefreshService(Context context) {
++        super(context);
++    }
++
++    @Override
++    public void onStart() {
++        publishBinderService(SERVICE, new IEinkRefresh.Stub() {
++            @Override
++            public void flash() {
++                write();
++            }
++        });
++    }
++
++    private synchronized void write() {
++        try (FileOutputStream out = new FileOutputStream(NODE)) {
++            out.write('1');
++        } catch (IOException e) {
++            if (!mWarned) {
++                mWarned = true;
++                Slog.w(TAG, "cannot write " + NODE, e);
++            }
++        }
++    }
++}
+diff --git a/services/java/com/android/server/SystemServer.java b/services/java/com/android/server/SystemServer.java
+index 4bb406fc5..ea2cc3011 100644
+--- a/services/java/com/android/server/SystemServer.java
++++ b/services/java/com/android/server/SystemServer.java
+@@ -178,6 +178,7 @@ import com.android.server.devicestate.DeviceStateManagerService;
+ import com.android.server.display.DisplayManagerService;
+ import com.android.server.display.color.ColorDisplayService;
+ import com.android.server.dreams.DreamManagerService;
++import com.android.server.eink.EinkRefreshService;
+ import com.android.server.emergency.EmergencyAffordanceService;
+ import com.android.server.files.FileService;
+ import com.android.server.flags.FeatureFlagsService;
+@@ -2583,6 +2584,10 @@ public final class SystemServer implements Dumpable {
+             mSystemServiceManager.startService(ColorDisplayService.class);
+             t.traceEnd();
+ 
++            t.traceBegin("StartEinkRefreshService");
++            mSystemServiceManager.startService(EinkRefreshService.class);
++            t.traceEnd();
++
+             // TODO(aml-jobscheduler): Think about how to do it properly.
+             t.traceBegin("StartJobScheduler");
+             mSystemServiceManager.startService(JobSchedulerService.class);
+-- 
+2.54.0
+

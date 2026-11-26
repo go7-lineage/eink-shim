@@ -1,0 +1,3 @@
+/dev/ebc                                         u:object_r:ebc_device:s0
+
+/vendor/bin/init\.eink_shim\.drm\.sh             u:object_r:eink_drm_card_exec:s0

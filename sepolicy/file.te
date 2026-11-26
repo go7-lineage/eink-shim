@@ -1,0 +1,3 @@
+# onyx-epd settings and status (/sys/devices/virtual/sepdc/debug: cut_frame_num, ui_*, status)
+type sysfs_sepdc, sysfs_type, fs_type;
+type sysfs_sepdc_flash, sysfs_type, fs_type;

@@ -1,0 +1,90 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Go7 port <go7-port@example.invalid>
+Date: Thu, 29 Oct 2026 20:00:00 +0000
+Subject: [PATCH] sepolicy: allow platform_app to set vendor_eink_shim_mode_prop
+
+The E-Ink mode tile (platform_app) sets and reads the refresh mode
+through persist.vendor.eink_shim.mode, which the vendor composer reads.
+Same shape as vendor_frontlight_prop: public type, mirrored into the
+frozen prebuilts/api/202604 snapshot, compat mapping entries, and
+platform_app set/get. The
+system_writes_vendor_properties_violators attribute it needs is already
+added by the frontlight patch, which this one applies on top of.
+---
+ prebuilts/api/202604/public/property.te | 2 ++
+ private/compat/202504/202504.ignore.cil | 1 +
+ private/compat/202604/202604.cil        | 2 ++
+ private/platform_app.te                 | 4 ++++
+ public/property.te                      | 2 ++
+ 5 files changed, 11 insertions(+)
+
+diff --git a/prebuilts/api/202604/public/property.te b/prebuilts/api/202604/public/property.te
+index 5c93c6a..caddac0 100644
+--- a/prebuilts/api/202604/public/property.te
++++ b/prebuilts/api/202604/public/property.te
+@@ -289,6 +289,8 @@ vendor_public_prop(persist_vendor_debug_wifi_prop)
+ 
+ vendor_public_prop(vendor_frontlight_prop)
+ 
++vendor_public_prop(vendor_eink_shim_mode_prop)
++
+ # Properties to select vendor/odm APEXes
+ system_public_prop(apexd_select_prop)
+ 
+diff --git a/private/compat/202504/202504.ignore.cil b/private/compat/202504/202504.ignore.cil
+index 4e04838..91767aa 100644
+--- a/private/compat/202504/202504.ignore.cil
++++ b/private/compat/202504/202504.ignore.cil
+@@ -20,6 +20,7 @@
+     mmd_config_prop
+     native_serial_service
+     vendor_frontlight_prop
++    vendor_eink_shim_mode_prop
+     pbtombstone_exec
+     personal_context_service
+     prefetch
+diff --git a/private/compat/202604/202604.cil b/private/compat/202604/202604.cil
+index c8f0a86..804c9ca 100644
+--- a/private/compat/202604/202604.cil
++++ b/private/compat/202604/202604.cil
+@@ -984,6 +984,7 @@
+ (expandtypeattribute (remote_auth_service_202604) true)
+ (expandtypeattribute (remote_prov_prop_202604) true)
+ (expandtypeattribute (vendor_frontlight_prop_202604) true)
++(expandtypeattribute (vendor_eink_shim_mode_prop_202604) true)
+ (expandtypeattribute (remote_provisioning_service_202604) true)
+ (expandtypeattribute (repair_mode_metadata_file_202604) true)
+ (expandtypeattribute (resourcecache_data_file_202604) true)
+@@ -2434,6 +2435,7 @@
+ (typeattributeset remote_auth_service_202604 (remote_auth_service))
+ (typeattributeset remote_prov_prop_202604 (remote_prov_prop))
+ (typeattributeset vendor_frontlight_prop_202604 (vendor_frontlight_prop))
++(typeattributeset vendor_eink_shim_mode_prop_202604 (vendor_eink_shim_mode_prop))
+ (typeattributeset remote_provisioning_service_202604 (remote_provisioning_service))
+ (typeattributeset repair_mode_metadata_file_202604 (repair_mode_metadata_file))
+ (typeattributeset resourcecache_data_file_202604 (resourcecache_data_file))
+diff --git a/private/platform_app.te b/private/platform_app.te
+index a1e6183..1d90239 100644
+--- a/private/platform_app.te
++++ b/private/platform_app.te
+@@ -17,3 +17,7 @@ platform_app_domain(platform_app)
+ typeattribute platform_app system_writes_vendor_properties_violators;
+ set_prop(platform_app, vendor_frontlight_prop)
+ get_prop(platform_app, vendor_frontlight_prop)
++
++# The E-Ink mode tile sets and reads the refresh mode (persist.vendor.eink_shim.mode)
++set_prop(platform_app, vendor_eink_shim_mode_prop)
++get_prop(platform_app, vendor_eink_shim_mode_prop)
+diff --git a/public/property.te b/public/property.te
+index 4046fbf..7453a09 100644
+--- a/public/property.te
++++ b/public/property.te
+@@ -286,6 +286,8 @@ vendor_public_prop(persist_vendor_debug_wifi_prop)
+ 
+ vendor_public_prop(vendor_frontlight_prop)
+ 
++vendor_public_prop(vendor_eink_shim_mode_prop)
++
+ # Properties to select vendor/odm APEXes
+ system_public_prop(apexd_select_prop)
+ 

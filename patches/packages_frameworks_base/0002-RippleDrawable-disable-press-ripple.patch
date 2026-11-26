@@ -1,0 +1,19 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Go7 port <go7-port@example.invalid>
+Date: Sun, 1 Nov 2026 13:00:00 +0000
+Subject: [PATCH] RippleDrawable: disable press ripple
+---
+diff --git a/graphics/java/android/graphics/drawable/RippleDrawable.java b/graphics/java/android/graphics/drawable/RippleDrawable.java
+index 641a2ae..08c3e7a 100644
+--- a/graphics/java/android/graphics/drawable/RippleDrawable.java
++++ b/graphics/java/android/graphics/drawable/RippleDrawable.java
+@@ -344,6 +344,9 @@ public class RippleDrawable extends LayerDrawable {
+     }
+ 
+     private void setRippleActive(boolean active) {
++        if (active) {
++            return;
++        }
+         if (mRippleActive != active) {
+             mRippleActive = active;
+             if (mState.mRippleStyle == STYLE_SOLID) {

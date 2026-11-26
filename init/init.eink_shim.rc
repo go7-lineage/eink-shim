@@ -1,0 +1,43 @@
+# drm_hwcomposer's device: the onyx-epd card, found by driver (card numbers follow probe order)
+service vendor.eink-drm-card /vendor/bin/init.eink_shim.drm.sh
+    user system
+    group system graphics
+    oneshot
+    disabled
+
+on early-boot
+    # before class hal (the composer) starts
+    exec_start vendor.eink-drm-card
+
+    # e-ink: /dev/ebc (full refreshes, ebcsend) and the onyx-epd UI policy settings (sepdc/debug)
+    chown system system /dev/ebc
+    chmod 0660 /dev/ebc
+    chown system system /sys/devices/virtual/sepdc/debug/cut_frame_num
+    chmod 0660 /sys/devices/virtual/sepdc/debug/cut_frame_num
+    chown system system /sys/devices/virtual/sepdc/debug/ui_mode
+    chown system system /sys/devices/virtual/sepdc/debug/ui_gc
+    chown system system /sys/devices/virtual/sepdc/debug/ui_full
+    chown system system /sys/devices/virtual/sepdc/debug/ui_a2cut
+    chown system system /sys/devices/virtual/sepdc/debug/ui_gamma
+    chown system system /sys/devices/virtual/sepdc/debug/ui_levels
+    chown system system /sys/devices/virtual/sepdc/debug/ui_flash
+
+# The QS tile and Settings write the shim's properties; the driver's UI policy reads them from sysfs.
+# Unparsable values are rejected by sysfs and leave the old setting (the shim fell back to defaults).
+on property:persist.vendor.eink_shim.mode=*
+    write /sys/devices/virtual/sepdc/debug/ui_mode ${persist.vendor.eink_shim.mode}
+
+on property:persist.vendor.eink_shim.gc=*
+    write /sys/devices/virtual/sepdc/debug/ui_gc ${persist.vendor.eink_shim.gc}
+
+on property:persist.vendor.eink_shim.full=*
+    write /sys/devices/virtual/sepdc/debug/ui_full ${persist.vendor.eink_shim.full}
+
+on property:persist.vendor.eink_shim.a2cut=*
+    write /sys/devices/virtual/sepdc/debug/ui_a2cut ${persist.vendor.eink_shim.a2cut}
+
+on property:persist.vendor.eink_shim.gamma=*
+    write /sys/devices/virtual/sepdc/debug/ui_gamma ${persist.vendor.eink_shim.gamma}
+
+on property:persist.vendor.eink_shim.levels=*
+    write /sys/devices/virtual/sepdc/debug/ui_levels ${persist.vendor.eink_shim.levels}

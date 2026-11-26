@@ -1,0 +1,2 @@
+# onyx-epd /dev/ebc (stock SET_EBC_SEND_UPDATE)
+type ebc_device, dev_type;

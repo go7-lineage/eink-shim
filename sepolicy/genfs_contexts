@@ -1,0 +1,2 @@
+genfscon sysfs /devices/virtual/sepdc/debug      u:object_r:sysfs_sepdc:s0
+genfscon sysfs /devices/virtual/sepdc/debug/ui_flash   u:object_r:sysfs_sepdc_flash:s0
