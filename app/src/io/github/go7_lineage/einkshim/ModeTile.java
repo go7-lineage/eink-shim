@@ -11,8 +11,8 @@ public class ModeTile extends TileService {
     private static final String PROP = "persist.vendor.eink_shim.mode";
 
     // Same names as ui_modes in kernel/core/epd_ui.c, first is default
-    private static final String[] MODES = { "speed", "normal", "regal", "regalplus" };
-    private static final String[] NAMES = { "Speed", "Normal", "Regal", "Regal+" };
+    private static final String[] MODES = { "speed", "normal", "regal", "regalplus", "night" };
+    private static final String[] NAMES = { "Speed", "Normal", "Regal", "Regal+", "Night" };
 
     @Override
     public void onStartListening() {
