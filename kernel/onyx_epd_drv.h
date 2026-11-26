@@ -71,8 +71,8 @@ struct onyx_epd {
 	struct epd_ui_cfg ui_cfg;
 	struct epd_levels levels;
 	bool gamma_on;
-	const u8 *gamma;
-	u8 gamma_lut[256];
+	const u8 *lut;
+	u8 lut_buf[256];
 	struct delayed_work ui_work;
 	u64 ui_frames, ui_updates, ui_passes, ui_rects, ui_cached;
 	u32 ui_us_last, ui_us_max;

@@ -24,16 +24,18 @@ struct ui_mode {
 	int wf;
 	u32 flag;
 	bool debounced;
+	bool inverted;
 };
 
 static const struct ui_mode ui_modes[EPD_UI_NMODES] = {
-	[EPD_UI_SPEED] = { "speed", 4, 0x2000, false },
-	[EPD_UI_NORMAL] = { "normal", 255, 0, true },
-	[EPD_UI_REGAL] = { "regal", 5, 0x1000, true },
-	[EPD_UI_REGALPLUS] = { "regalplus", 16, 0, true },
+	[EPD_UI_SPEED] = { "speed", 4, 0x2000, false, false },
+	[EPD_UI_NORMAL] = { "normal", 255, 0, true, false },
+	[EPD_UI_REGAL] = { "regal", 5, 0x1000, true, false },
+	[EPD_UI_REGALPLUS] = { "regalplus", 16, 0, true, false },
+	[EPD_UI_NIGHT] = { "night", 15, 0x1000, true, true },
 };
 
-static const struct ui_mode ui_a2 = { "a2", 4, 0x2000, false };
+static const struct ui_mode ui_a2 = { "a2", 4, 0x2000, false, false };
 
 #define UI_GC_WF	2
 #define UI_GC_FLAG	0x1000
@@ -56,6 +58,11 @@ const char *epd_ui_mode_name(int mode)
 static const struct ui_mode *ui_mode(int mode)
 {
 	return &ui_modes[mode >= 0 && mode < EPD_UI_NMODES ? mode : EPD_UI_SPEED];
+}
+
+bool epd_ui_mode_inverted(int mode)
+{
+	return ui_mode(mode)->inverted;
 }
 
 int epd_ui_init(struct epd_ui *u, u32 w, u32 h)

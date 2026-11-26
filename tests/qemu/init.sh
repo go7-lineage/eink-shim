@@ -131,6 +131,15 @@ quiet "ui_levels while gamma is off"
 echo 2 > $S/ui_flash 2>/dev/null && fail "ui_flash 2 accepted"
 redraws ui_flash 1
 grep "^ui " $S/status | grep -q "flashes 1 (dropped 0)" || fail "ui_flash count: $(grep "^ui " $S/status)"
+echo night > $S/ui_mode && [ "$(cat $S/ui_mode)" = night ] || fail "ui_mode night"
+quiet "ui_mode night without a new frame"
+echo "0 60 255" > $S/ui_levels
+quiet "ui_levels in night while gamma is off"
+redraws ui_gamma 1
+redraws ui_gamma 0
+echo "0 100 255" > $S/ui_levels
+echo speed > $S/ui_mode
+quiet "ui_mode speed without a new frame"
 f0=$(fval frames)
 kill $kms
 wait $kms
@@ -212,6 +221,17 @@ unload
 load
 grep -q "^sleep image missing" $S/status || fail "sleep image after rm: $(grep '^sleep' $S/status)"
 composer_cycle missing
+pattern black
+pattern stripes
+h_plain=$(fval hash)
+pattern black
+echo night > $S/ui_mode
+pattern stripes
+[ "$(fval hash)" != "$h_plain" ] || fail "night stripes match plain stripes: hash $h_plain"
+pattern white
+echo speed > $S/ui_mode
+pattern white
+log "night: $(fake)"
 
 i=0
 for m in 2 4 1 5 2 16 15 14 2 4 4 1 2 5 2 3 2; do

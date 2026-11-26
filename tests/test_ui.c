@@ -106,11 +106,13 @@ TEST(ui_mode_names)
 	CHECK_EQ(epd_ui_mode_by_name("normal"), EPD_UI_NORMAL);
 	CHECK_EQ(epd_ui_mode_by_name("regal"), EPD_UI_REGAL);
 	CHECK_EQ(epd_ui_mode_by_name("regalplus"), EPD_UI_REGALPLUS);
+	CHECK_EQ(epd_ui_mode_by_name("night"), EPD_UI_NIGHT);
 	CHECK_EQ(epd_ui_mode_by_name("fast"), -EINVAL);
 	CHECK_EQ(epd_ui_mode_by_name(""), -EINVAL);
 	CHECK_EQ(epd_ui_mode_by_name("speed "), -EINVAL);
 	CHECK(!strcmp(epd_ui_mode_name(EPD_UI_SPEED), "speed"));
 	CHECK(!strcmp(epd_ui_mode_name(EPD_UI_REGALPLUS), "regalplus"));
+	CHECK(!strcmp(epd_ui_mode_name(EPD_UI_NIGHT), "night"));
 	CHECK(!strcmp(epd_ui_mode_name(EPD_UI_NMODES), "?"));
 	CHECK(!strcmp(epd_ui_mode_name(-1), "?"));
 }
@@ -183,7 +185,8 @@ TEST(ui_modes_pick_waveform_and_flags)
 {
 	static const struct { int mode, wf; u32 flag; } want[] = {
 		{ EPD_UI_SPEED, 4, 0x2000 }, { EPD_UI_NORMAL, 255, 0 },
-		{ EPD_UI_REGAL, 5, 0x1000 }, { EPD_UI_REGALPLUS, 16, 0 }, { 99, 4, 0x2000 },
+		{ EPD_UI_REGAL, 5, 0x1000 }, { EPD_UI_REGALPLUS, 16, 0 }, { EPD_UI_NIGHT, 15, 0x1000 },
+		{ 99, 4, 0x2000 },
 	};
 	struct ui_rig r;
 	size_t i;
@@ -368,7 +371,8 @@ TEST(ui_gc16_cancels_a_pending_big_burst)
 TEST(ui_regal_modes_are_debounced)
 {
 	static const struct { int mode, wf; u32 flag; } m[] = {
-		{ EPD_UI_REGAL, 5, 0x1000 }, { EPD_UI_REGALPLUS, 16, 0 }, { EPD_UI_SPEED, 4, 0x2000 },
+		{ EPD_UI_REGAL, 5, 0x1000 }, { EPD_UI_REGALPLUS, 16, 0 }, { EPD_UI_NIGHT, 15, 0x1000 },
+		{ EPD_UI_SPEED, 4, 0x2000 },
 	};
 	struct ui_rig r;
 	u64 wait = 0;
@@ -876,5 +880,29 @@ TEST(ui_seed_serves_a_pending_flash)
 	CHECK_EQ(r.ui.flashes, 1);
 	CHECK_EQ(step(&r, 5000, &wait), EPD_UI_IDLE);
 	CHECK_EQ(epd_ui_flash(&r.ui, 599), -EBUSY);
+	epd_ui_release(&r.ui);
+}
+
+TEST(ui_only_night_inverts)
+{
+	int m;
+
+	for (m = 0; m < EPD_UI_NMODES; m++)
+		CHECK_EQ(epd_ui_mode_inverted(m), m == EPD_UI_NIGHT);
+	CHECK(!epd_ui_mode_inverted(-1));
+	CHECK(!epd_ui_mode_inverted(EPD_UI_NMODES));
+}
+
+TEST(ui_entering_night_refreshes_with_gc16)
+{
+	struct ui_rig r;
+
+	ui_rig_init(&r, EPD_UI_SPEED);
+	CHECK_EQ(frame(&r, 0), 1);
+	r.cfg.mode = EPD_UI_NIGHT;
+	poke(&r, 0, 0);
+	CHECK_EQ(frame(&r, 1000), 1);
+	EXPECT_REQ(&r, 0, 0, W, H, 2, 0x1000, 1);
+	CHECK_EQ(r.cut, 0);
 	epd_ui_release(&r.ui);
 }

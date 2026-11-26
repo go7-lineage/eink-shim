@@ -138,14 +138,14 @@ void epd_submit(struct onyx_epd *p, const struct epd_request *r, int n, const u8
 	n = min(n, EPD_UI_MAX_RECTS);
 	for (i = 0; i < n; i++)
 		epd_convert_update(rgba, pitch, p->grey_in, EPD_W, r[i].left, r[i].top, r[i].width, r[i].height,
-				   r[i].flags | (y1_ordered ? EPD_CONV_Y1_ORDERED : 0), false, bgr, p->gamma, p->err);
+				   r[i].flags | (y1_ordered ? EPD_CONV_Y1_ORDERED : 0), false, bgr, p->lut, p->err);
 	epd_push(p, r, n);
 }
 
 void epd_submit_grey(struct onyx_epd *p, const struct epd_request *r, const u8 *grey)
 {
 	epd_convert_grey8(grey, EPD_W, p->grey_in, EPD_W, r->left, r->top, r->width, r->height,
-			  r->flags | (y1_ordered ? EPD_CONV_Y1_ORDERED : 0), p->gamma, p->err);
+			  r->flags | (y1_ordered ? EPD_CONV_Y1_ORDERED : 0), p->lut, p->err);
 	epd_push(p, r, 1);
 }
 

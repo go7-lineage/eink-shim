@@ -13,5 +13,6 @@ struct epd_levels {
 int epd_levels_parse(const char *s, struct epd_levels *out);
 bool epd_levels_identity(const struct epd_levels *l);
 void epd_gamma_build(u8 *lut, const struct epd_levels *l);
+bool epd_lut_build(u8 *lut, const struct epd_levels *l, bool invert);
 
 #endif

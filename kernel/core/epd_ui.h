@@ -4,7 +4,7 @@
 
 #include "epd_policy.h"
 
-enum epd_ui_mode { EPD_UI_SPEED, EPD_UI_NORMAL, EPD_UI_REGAL, EPD_UI_REGALPLUS, EPD_UI_NMODES };
+enum epd_ui_mode { EPD_UI_SPEED, EPD_UI_NORMAL, EPD_UI_REGAL, EPD_UI_REGALPLUS, EPD_UI_NIGHT, EPD_UI_NMODES };
 
 #define EPD_UI_MAX_RECTS	4
 
@@ -48,6 +48,7 @@ void epd_ui_invalidate(struct epd_ui *u);
 int epd_ui_seed(struct epd_ui *u, const u8 *rgba, u32 pitch, size_t len, u64 now);
 int epd_ui_mode_by_name(const char *name);
 const char *epd_ui_mode_name(int mode);
+bool epd_ui_mode_inverted(int mode);
 int epd_ui_frame(struct epd_ui *u, const struct epd_ui_cfg *cfg, const u8 *rgba, u32 pitch, size_t len,
 		 u64 now, struct epd_request *out, int *cut);
 enum epd_ui_step epd_ui_step(struct epd_ui *u, u64 now, struct epd_request *out, int *n, u64 *wait);

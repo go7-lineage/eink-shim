@@ -106,3 +106,25 @@ void epd_gamma_build(u8 *lut, const struct epd_levels *l)
 		lut[i] = (u8)lo;
 	}
 }
+
+bool epd_lut_build(u8 *lut, const struct epd_levels *l, bool invert)
+{
+	bool gamma = l && !epd_levels_identity(l);
+	u32 i;
+
+	if (!gamma && !invert)
+		return false;
+	if (gamma)
+		epd_gamma_build(lut, l);
+	else
+		for (i = 0; i < 256; i++)
+			lut[i] = (u8)i;
+	if (invert)
+		for (i = 0; i < 128; i++) {
+			u8 t = lut[i];
+
+			lut[i] = lut[255 - i];
+			lut[255 - i] = t;
+		}
+	return true;
+}

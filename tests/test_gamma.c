@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include <math.h>
+#include <string.h>
 
 #include "epd_gamma.h"
 #include "test.h"
@@ -138,4 +139,56 @@ TEST(gamma_build_never_decreases)
 				for (i = 1; i < 256; i++)
 					CHECK(lut[i] >= lut[i - 1]);
 			}
+}
+
+TEST(lut_build_without_gamma_or_invert_is_not_needed)
+{
+	const struct epd_levels id = EPD_LEVELS_IDENTITY;
+	u8 lut[256];
+
+	memset(lut, 0x5a, sizeof(lut));
+	CHECK(!epd_lut_build(lut, NULL, false));
+	CHECK(!epd_lut_build(lut, &id, false));
+	CHECK_EQ(lut[0], 0x5a);
+	CHECK_EQ(lut[255], 0x5a);
+}
+
+TEST(lut_build_inverts_without_gamma)
+{
+	const struct epd_levels id = EPD_LEVELS_IDENTITY;
+	u8 lut[256];
+	int i;
+
+	CHECK(epd_lut_build(lut, NULL, true));
+	for (i = 0; i < 256; i++)
+		CHECK_EQ(lut[i], 255 - i);
+	CHECK(epd_lut_build(lut, &id, true));
+	for (i = 0; i < 256; i++)
+		CHECK_EQ(lut[i], 255 - i);
+}
+
+TEST(lut_build_gamma_only_is_the_gamma_table)
+{
+	const struct epd_levels l = { 16, 140, 240 };
+	u8 lut[256], want[256];
+
+	epd_gamma_build(want, &l);
+	CHECK(epd_lut_build(lut, &l, false));
+	CHECK_MEM(lut, want, sizeof(lut));
+}
+
+TEST(lut_build_inverts_before_gamma)
+{
+	const struct epd_levels l = { 16, 140, 240 };
+	u8 lut[256], g[256];
+	int i;
+
+	epd_gamma_build(g, &l);
+	CHECK(epd_lut_build(lut, &l, true));
+	for (i = 0; i < 256; i++)
+		CHECK_EQ(lut[i], g[255 - i]);
+	CHECK_EQ(lut[0], 255);
+	CHECK_EQ(lut[255], 0);
+	for (i = 1; i < 256; i++)
+		CHECK(lut[i] <= lut[i - 1]);
 }

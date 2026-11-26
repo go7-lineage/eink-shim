@@ -90,6 +90,18 @@ static ssize_t status_show(struct device *dev, struct device_attribute *attr, ch
 }
 static DEVICE_ATTR_RO(status);
 
+static bool epd_lut_refresh(struct onyx_epd *p)
+{
+	u8 lut[256];
+	bool active = epd_lut_build(lut, p->gamma_on ? &p->levels : NULL, epd_ui_mode_inverted(p->ui_cfg.mode));
+	bool changed = active != !!p->lut || (active && memcmp(lut, p->lut_buf, sizeof(lut)));
+
+	if (changed && active)
+		memcpy(p->lut_buf, lut, sizeof(lut));
+	p->lut = active ? p->lut_buf : NULL;
+	return changed;
+}
+
 static ssize_t ui_mode_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct onyx_epd *p = dev_get_drvdata(dev);
@@ -110,6 +122,7 @@ static ssize_t ui_mode_store(struct device *dev, struct device_attribute *attr, 
 		return mode;
 	mutex_lock(&p->in_lock);
 	p->ui_cfg.mode = mode;
+	epd_lut_refresh(p);
 	mutex_unlock(&p->in_lock);
 	return count;
 }
@@ -143,21 +156,14 @@ EPD_UI_INT_ATTR(ui_a2cut, a2cut);
 
 static ssize_t epd_gamma_set(struct onyx_epd *p, const bool *on, const struct epd_levels *l, size_t count)
 {
-	struct epd_levels old;
-	bool was, active, changed;
+	bool changed;
 
 	mutex_lock(&p->in_lock);
-	was = !!p->gamma;
-	old = p->levels;
 	if (on)
 		p->gamma_on = *on;
 	if (l)
 		p->levels = *l;
-	active = p->gamma_on && !epd_levels_identity(&p->levels);
-	changed = active != was || (active && memcmp(&old, &p->levels, sizeof(old)));
-	if (changed && active)
-		epd_gamma_build(p->gamma_lut, &p->levels);
-	p->gamma = active ? p->gamma_lut : NULL;
+	changed = epd_lut_refresh(p);
 	mutex_unlock(&p->in_lock);
 	if (changed)
 		epd_redraw(p);

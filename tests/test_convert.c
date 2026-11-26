@@ -4,6 +4,7 @@
 
 #include "epd_convert.h"
 #include "epd_engine.h"
+#include "epd_gamma.h"
 #include "epd_neon.h"
 #include "test.h"
 
@@ -498,3 +499,17 @@ TEST(neon_row_matches_scalar)
 	}
 }
 #endif
+
+TEST(convert_update_inverts_through_the_table)
+{
+	static const u8 in[4] = { 0xff, 0x00, 0x80, 0x0f }, want[4] = { 0x00, 0xf0, 0x70, 0xf0 };
+	static u8 rgba[4 * 4], grey[4], lut[256];
+	static int err[3 * 4 + 12];
+	size_t i;
+
+	for (i = 0; i < 4; i++)
+		memset(rgba + 4 * i, in[i], 3);
+	CHECK(epd_lut_build(lut, NULL, true));
+	epd_convert_update(rgba, 4 * 4, grey, 4, 0, 0, 4, 1, 0, false, false, lut, err);
+	CHECK_MEM(grey, want, sizeof(grey));
+}
