@@ -17,9 +17,10 @@ void epd_dither_flyd(u8 *buf, u32 w, u32 h, size_t stride);
 int epd_dither(u8 *buf, u32 w, u32 h, size_t stride, u32 flags, int *err);
 void epd_dither_y1_ordered(u8 *buf, u32 w, u32 h, size_t stride, u32 x0, u32 y0);
 void epd_regal_aa_mark(const u8 *levels, size_t stride, u32 w, u32 h, u8 *mark, int shift);
+bool epd_quantize_update(u8 *grey, size_t stride, u32 left, u32 top, u32 w, u32 h, u32 flags, int *err);
 void epd_convert_update(const u8 *rgba, size_t rgba_stride, u8 *grey, size_t grey_stride, u32 left,
-			u32 top, u32 w, u32 h, u32 flags, bool ggg, bool bgr, const u8 *gamma, int *err);
+			u32 top, u32 w, u32 h, bool ggg, bool bgr, const u8 *gamma);
 void epd_convert_grey8(const u8 *src, size_t src_stride, u8 *grey, size_t grey_stride, u32 left, u32 top,
-		       u32 w, u32 h, u32 flags, const u8 *gamma, int *err);
+		       u32 w, u32 h, const u8 *gamma);
 
 #endif

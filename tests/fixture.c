@@ -44,3 +44,46 @@ const struct wbf_blob *fixture_wbf(void)
 		wbf_build(&fixture_spec, &blob);
 	return &blob;
 }
+
+unsigned int fixture_plain_frames(unsigned int slot, unsigned int temp)
+{
+	static const u8 n[FIX_MODES] = { 2, 4, 6, 2, 5, 1, 3, 1, 2, 5, 5 };
+
+	(void)temp;
+	return n[slot];
+}
+
+u8 fixture_plain_drive(unsigned int slot, unsigned int temp, unsigned int frame, unsigned int nw, unsigned int old)
+{
+	if (frame + 1 >= fixture_plain_frames(slot, temp))
+		return 0;
+	switch (slot) {
+	case 1:
+		return nw == 30 && old != 30 ? 2 : nw == 0 && old != 0 ? 1 : 0;
+	case 6:
+		return nw == 30 && old == 0 ? 2 : nw == 0 && old == 30 ? 1 : 0;
+	case 9:
+		if (nw == 14 && old == 0)
+			return 0;
+		break;
+	default:
+		break;
+	}
+	return nw > old ? 2 : nw < old ? 1 : frame == 0 ? 1 : 2;
+}
+
+const struct wbf_blob *fixture_plain_wbf(void)
+{
+	static const u8 plain_bounds[] = { 0, 50 };
+	static struct wbf_blob blob;
+	struct wbf_spec s = fixture_spec;
+
+	if (!blob.data) {
+		s.n_temps = 1;
+		s.temp_bounds = plain_bounds;
+		s.frames = fixture_plain_frames;
+		s.drive = fixture_plain_drive;
+		wbf_build(&s, &blob);
+	}
+	return &blob;
+}

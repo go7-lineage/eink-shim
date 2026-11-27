@@ -5,6 +5,9 @@
 #include "epd_port.h"
 
 #define EPD_MAX_FRAMES	1024
+#define EPD_MODE_DU	1
+#define EPD_MODE_GC16	2
+#define EPD_MODE_A2	4
 #define EPD_TEMP_HYST_MC	1000
 
 struct epd_wbf {

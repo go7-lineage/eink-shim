@@ -4,9 +4,9 @@
  */
 #include "epd_policy.h"
 
-#define M_DU	1
-#define M_GC16	2
-#define M_A2	4
+#define M_DU	EPD_MODE_DU
+#define M_GC16	EPD_MODE_GC16
+#define M_A2	EPD_MODE_A2
 #define M_AUTO	0xff
 
 bool epd_request_clip(struct epd_request *r, s32 left, s32 top, s32 width, s32 height, u32 w, u32 h)
@@ -65,12 +65,24 @@ void epd_policy_apply(struct epd_policy *p, const struct epd_request *in, struct
 	out->upd.height = in->height;
 	out->upd.mode = mode;
 	out->upd.full = full;
+	out->upd.repeat = mode == M_A2 && !in->once && !p->a2_once;
 	out->upd.marker = in->marker;
 	out->flags = in->flags;
 	out->barrier = barrier;
 
 	p->last_mode = in->mode == M_AUTO ? M_GC16 : in->mode;
 	p->last_flags = in->flags;
+}
+
+void epd_policy_apply_next(const struct epd_decision *first, const struct epd_request *in, struct epd_decision *out)
+{
+	*out = *first;
+	out->upd.top = in->top;
+	out->upd.left = in->left;
+	out->upd.width = in->width;
+	out->upd.height = in->height;
+	out->upd.marker = in->marker;
+	out->barrier = false;
 }
 
 void epd_policy_apply_group(struct epd_policy *p, const struct epd_request *in, int n, struct epd_decision *out)
@@ -80,15 +92,8 @@ void epd_policy_apply_group(struct epd_policy *p, const struct epd_request *in, 
 	if (n < 1)
 		return;
 	epd_policy_apply(p, &in[0], &out[0]);
-	for (i = 1; i < n; i++) {
-		out[i] = out[0];
-		out[i].upd.top = in[i].top;
-		out[i].upd.left = in[i].left;
-		out[i].upd.width = in[i].width;
-		out[i].upd.height = in[i].height;
-		out[i].upd.marker = in[i].marker;
-		out[i].barrier = false;
-	}
+	for (i = 1; i < n; i++)
+		epd_policy_apply_next(&out[0], &in[i], &out[i]);
 }
 
 void epd_queue_init(struct epd_queue *q)
@@ -96,33 +101,125 @@ void epd_queue_init(struct epd_queue *q)
 	memset(q, 0, sizeof(*q));
 }
 
+struct queue_rect {
+	u32 x0, y0, x1, y1;
+};
+
+static struct queue_rect queue_rect(const struct epd_decision *d)
+{
+	struct queue_rect r = { d->upd.left, d->upd.top, (u32)d->upd.left + d->upd.width,
+				(u32)d->upd.top + d->upd.height };
+
+	return r;
+}
+
+static u64 queue_area(const struct queue_rect *r)
+{
+	return r->x1 > r->x0 && r->y1 > r->y0 ? (u64)(r->x1 - r->x0) * (r->y1 - r->y0) : 0;
+}
+
+static struct queue_rect queue_box(const struct queue_rect *a, const struct queue_rect *b)
+{
+	struct queue_rect r = { a->x0 < b->x0 ? a->x0 : b->x0, a->y0 < b->y0 ? a->y0 : b->y0,
+				a->x1 > b->x1 ? a->x1 : b->x1, a->y1 > b->y1 ? a->y1 : b->y1 };
+
+	return r;
+}
+
+static void queue_set_rect(struct epd_decision *d, const struct queue_rect *r)
+{
+	d->upd.left = (u16)r->x0;
+	d->upd.top = (u16)r->y0;
+	d->upd.width = (u16)(r->x1 - r->x0);
+	d->upd.height = (u16)(r->y1 - r->y0);
+}
+
+static struct epd_decision *queue_at(struct epd_queue *q, int i)
+{
+	return &q->q[(q->head + i) % EPD_QMAX];
+}
+
 static bool queue_same_kind(const struct epd_decision *t, const struct epd_decision *d)
 {
-	return !d->barrier && t->upd.mode == d->upd.mode && t->upd.full == d->upd.full && t->flags == d->flags &&
-	       t->upd.left < d->upd.left + d->upd.width && d->upd.left < t->upd.left + t->upd.width &&
-	       t->upd.top < d->upd.top + d->upd.height && d->upd.top < t->upd.top + t->upd.height;
+	return t->upd.mode == d->upd.mode && t->upd.full == d->upd.full && t->upd.repeat == d->upd.repeat &&
+	       t->flags == d->flags;
+}
+
+static bool queue_fast(const struct epd_decision *d)
+{
+	return d->upd.mode == M_A2 || d->upd.mode == M_DU;
+}
+
+static bool queue_join(struct epd_decision *t, const struct epd_decision *d)
+{
+	struct queue_rect a = queue_rect(t), b = queue_rect(d), box = queue_box(&a, &b);
+	struct queue_rect both = { a.x0 > b.x0 ? a.x0 : b.x0, a.y0 > b.y0 ? a.y0 : b.y0,
+				   a.x1 < b.x1 ? a.x1 : b.x1, a.y1 < b.y1 ? a.y1 : b.y1 };
+
+	if (queue_area(&box) != queue_area(&a) + queue_area(&b) - queue_area(&both))
+		return false;
+	queue_set_rect(t, &box);
+	t->upd.marker = d->upd.marker;
+	return true;
+}
+
+static bool queue_drop_covered(struct epd_queue *q, const struct epd_decision *d)
+{
+	struct queue_rect outer = queue_rect(d);
+	bool barrier = false;
+	int i, k;
+
+	for (i = 0; i < q->n;) {
+		struct epd_decision *t = queue_at(q, i);
+		struct queue_rect r = queue_rect(t);
+
+		if (!queue_fast(t) || r.x0 < outer.x0 || r.y0 < outer.y0 || r.x1 > outer.x1 || r.y1 > outer.y1) {
+			t->barrier |= barrier;
+			barrier = false;
+			i++;
+			continue;
+		}
+		barrier |= t->barrier;
+		for (k = i; k + 1 < q->n; k++)
+			*queue_at(q, k) = *queue_at(q, k + 1);
+		q->n--;
+		q->coalesced++;
+	}
+	return barrier;
 }
 
 void epd_queue_push(struct epd_queue *q, const struct epd_decision *d)
 {
-	struct epd_decision *t = &q->q[(q->head + q->n + EPD_QMAX - 1) % EPD_QMAX];
-	u32 tr = (u32)t->upd.left + t->upd.width, dr = (u32)d->upd.left + d->upd.width;
-	u32 tb = (u32)t->upd.top + t->upd.height, db = (u32)d->upd.top + d->upd.height;
-	u32 r = tr > dr ? tr : dr, b = tb > db ? tb : db;
+	struct epd_decision in = *d, *t;
+	struct queue_rect a, b, box;
+	int i;
 
-	if (q->n < EPD_QMAX && !(q->merge && q->n && queue_same_kind(t, d))) {
-		q->q[(q->head + q->n++) % EPD_QMAX] = *d;
+	if (q->merge && in.upd.full && !queue_fast(&in))
+		in.barrier |= queue_drop_covered(q, &in);
+	for (i = q->n - 1; q->merge && !in.barrier && i >= 0; i--) {
+		t = queue_at(q, i);
+		if (!queue_same_kind(t, &in))
+			break;
+		if (queue_join(t, &in)) {
+			q->coalesced++;
+			return;
+		}
+	}
+	if (q->n < EPD_QMAX) {
+		*queue_at(q, q->n++) = in;
 		return;
 	}
-	t->upd.left = t->upd.left < d->upd.left ? t->upd.left : d->upd.left;
-	t->upd.top = t->upd.top < d->upd.top ? t->upd.top : d->upd.top;
-	t->upd.width = (u16)(r - t->upd.left);
-	t->upd.height = (u16)(b - t->upd.top);
-	t->upd.mode = d->upd.mode;
-	t->upd.full |= d->upd.full;
-	t->upd.marker = d->upd.marker;
-	t->flags = d->flags;
-	t->barrier |= d->barrier;
+	t = queue_at(q, q->n - 1);
+	a = queue_rect(t);
+	b = queue_rect(&in);
+	box = queue_box(&a, &b);
+	queue_set_rect(t, &box);
+	t->upd.mode = in.upd.mode;
+	t->upd.full |= in.upd.full;
+	t->upd.repeat = in.upd.repeat;
+	t->upd.marker = in.upd.marker;
+	t->flags = in.flags;
+	t->barrier |= in.barrier;
 	q->coalesced++;
 }
 

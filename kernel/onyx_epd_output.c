@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
+#include <linux/delay.h>
 #include <linux/kthread.h>
+#include <linux/ktime.h>
+#include <linux/math64.h>
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/of_graph.h>
@@ -16,6 +19,10 @@
 static unsigned int link_idle_ms = 2000;
 module_param(link_idle_ms, uint, 0644);
 MODULE_PARM_DESC(link_idle_ms, "switch DSI link off after this long without frames");
+
+static unsigned int frame_us;
+module_param(frame_us, uint, 0644);
+MODULE_PARM_DESC(frame_us, "time from one waveform frame to the next, 0 for the waveform's frame rate");
 
 bool epd_param_swap_rg = true;
 module_param_named(swap_rg, epd_param_swap_rg, bool, 0644);
@@ -47,7 +54,7 @@ void epd_link_off_work(struct work_struct *w)
 	bool idle;
 
 	mutex_lock(&p->lock);
-	idle = (!p->eng || !epd_engine_busy(p->eng)) && !p->q.n && epd_out_idle(p);
+	idle = (!p->eng || !epd_engine_busy(p->eng)) && !p->pl.q.n && epd_out_idle(p);
 	mutex_unlock(&p->lock);
 	if (idle)
 		epd_link_off(p);
@@ -102,6 +109,24 @@ void epd_queue_frame(struct onyx_epd *p)
 	wake_up(&p->out_wq);
 }
 
+#define EPD_FRAME_MAX_NS	(100 * NSEC_PER_MSEC)
+
+static void epd_pace(struct onyx_epd *p)
+{
+	u64 period = READ_ONCE(frame_us) ? (u64)READ_ONCE(frame_us) * NSEC_PER_USEC : READ_ONCE(p->frame_ns);
+	u64 now = ktime_get_ns(), due = p->t_frame + min_t(u64, period, EPD_FRAME_MAX_NS);
+
+	if (p->t_frame && now < due) {
+		unsigned long us = (unsigned long)div_u64(due - now, NSEC_PER_USEC);
+
+		usleep_range(us, us + 50);
+		now = ktime_get_ns();
+	}
+	if (p->t_frame && now - p->t_frame < EPD_FRAME_MAX_NS)
+		epd_stat(&p->st_period, p->t_frame);
+	p->t_frame = now;
+}
+
 static bool epd_out_has_work(struct onyx_epd *p)
 {
 	bool work;
@@ -135,10 +160,12 @@ int epd_out_thread(void *data)
 			wake_up(&p->out_wq);
 			continue;
 		}
-		if (null)
+		if (null) {
 			epd_copy_frame(p, c, p->tmpl);
-		else
+		} else {
 			wake_up(&p->out_wq);
+			epd_pace(p);
+		}
 
 		mutex_lock(&p->client.modeset_mutex);
 		drm_client_for_each_modeset(ms, &p->client)

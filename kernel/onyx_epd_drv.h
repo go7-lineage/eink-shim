@@ -19,7 +19,7 @@
 #include "core/epd_convert.h"
 #include "core/epd_engine.h"
 #include "core/epd_gamma.h"
-#include "core/epd_policy.h"
+#include "core/epd_plane.h"
 #include "core/epd_ring.h"
 #include "core/epd_sleep.h"
 #include "core/epd_ui.h"
@@ -60,11 +60,7 @@ struct onyx_epd {
 	const struct firmware *fw;
 	const struct firmware *sleep_fw;
 	const struct firmware *poweroff_fw;
-	struct epd_policy pol;
-	struct epd_queue q;
-	u8 *grey;
-	u8 *grey_in;
-	int *err;
+	struct epd_plane pl;
 	struct epd_fbmap fbmap[EPD_NMAP];
 	u64 fbmap_seq;
 	struct page **fbmap_pages;
@@ -83,6 +79,7 @@ struct onyx_epd {
 	struct epd_sleep sleep;
 
 	struct epd_stat { u32 last, max; u64 sum, n; } st_tick, st_copy, st_commit, st_link, st_power, st_first;
+	struct epd_stat st_period;
 	u64 t_start;
 	int tick_cpu;
 
@@ -100,6 +97,8 @@ struct onyx_epd {
 	spinlock_t out_lock;
 	struct epd_ring ring;
 	u32 *tmpl;
+	u64 frame_ns;
+	u64 t_frame;
 
 	struct task_struct *thread;
 	wait_queue_head_t wq;
@@ -173,6 +172,7 @@ const u8 *epd_fb_cached(struct onyx_epd *p, struct drm_framebuffer *fb);
 void epd_fbmap_free(void *data);
 void epd_submit(struct onyx_epd *p, const struct epd_request *r, int n, const u8 *rgba, u32 pitch, bool bgr);
 void epd_submit_grey(struct onyx_epd *p, const struct epd_request *r, const u8 *grey);
+void epd_start(struct onyx_epd *p);
 void epd_request(struct onyx_epd *p, const struct onyx_epdc_upd *u, const u8 *rgba, u32 pitch, bool bgr);
 void epd_redraw(struct onyx_epd *p);
 void epd_ui_work(struct work_struct *work);

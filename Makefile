@@ -4,7 +4,7 @@ BUILD ?= build
 
 CORE_DIR := kernel/core
 CORE := $(addprefix $(CORE_DIR)/,epd_wbf.c epd_tables.c epd_frame.c epd_engine.c epd_convert.c epd_policy.c \
-	epd_ui.c epd_pattern.c epd_bootargs.c epd_ring.c epd_gamma.c epd_sleep.c)
+	epd_plane.c epd_ui.c epd_pattern.c epd_bootargs.c epd_ring.c epd_gamma.c epd_sleep.c)
 NEON := $(CORE_DIR)/epd_neon.c
 FUZZ_SRC := tests/fuzz_wbf.c tests/fixture.c tests/wbf_build.c
 TEST_SRC := $(filter-out tests/fuzz_%.c,$(wildcard tests/*.c))

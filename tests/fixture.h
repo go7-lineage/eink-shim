@@ -15,5 +15,8 @@ extern const struct epd_timing fixture_timing;
 unsigned int fixture_frames(unsigned int slot, unsigned int temp);
 u8 fixture_drive(unsigned int slot, unsigned int temp, unsigned int frame, unsigned int nw, unsigned int old);
 const struct wbf_blob *fixture_wbf(void);
+unsigned int fixture_plain_frames(unsigned int slot, unsigned int temp);
+u8 fixture_plain_drive(unsigned int slot, unsigned int temp, unsigned int frame, unsigned int nw, unsigned int old);
+const struct wbf_blob *fixture_plain_wbf(void);
 
 #endif

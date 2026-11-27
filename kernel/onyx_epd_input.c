@@ -13,13 +13,18 @@
 #include <drm/drm_gem.h>
 #include <drm/drm_gem_framebuffer_helper.h>
 #include <drm/drm_modeset_lock.h>
+#include <drm/drm_print.h>
 
 #include "onyx_epd_drv.h"
 #include "onyx_epd_uapi.h"
 
 static bool y1_ordered;
 module_param(y1_ordered, bool, 0644);
-MODULE_PARM_DESC(y1_ordered, "Y1 (speed mode 0x2000) as ordered dither instead of stock Atkinson");
+MODULE_PARM_DESC(y1_ordered, "Y1 (flag 0x2000) as a dither fixed to the screen instead of stock's Atkinson per update");
+
+static bool a2_repeat = true;
+module_param(a2_repeat, bool, 0644);
+MODULE_PARM_DESC(a2_repeat, "finish A2 updates with stock's three further passes");
 
 static bool fast_read = true;
 module_param(fast_read, bool, 0644);
@@ -34,6 +39,7 @@ static bool epd_upd_to_req(const struct onyx_epdc_upd *u, struct epd_request *r)
 	r->update_mode = u->update_mode;
 	r->marker = u->update_marker;
 	r->flags = u->flag;
+	r->once = false;
 	return true;
 }
 
@@ -115,18 +121,9 @@ const u8 *epd_fb_cached(struct onyx_epd *p, struct drm_framebuffer *fb)
 
 static void epd_push(struct onyx_epd *p, const struct epd_request *r, int n)
 {
-	struct epd_decision d[EPD_UI_MAX_RECTS];
-	int i;
-	u32 y;
-
 	mutex_lock(&p->lock);
-	epd_policy_apply_group(&p->pol, r, n, d);
-	for (i = 0; i < n; i++) {
-		for (y = r[i].top; y < (u32)r[i].top + r[i].height; y++)
-			memcpy(p->grey + (size_t)y * EPD_W + r[i].left, p->grey_in + (size_t)y * EPD_W + r[i].left,
-			       r[i].width);
-		epd_queue_push(&p->q, &d[i]);
-	}
+	p->pl.pol.a2_once = !READ_ONCE(a2_repeat);
+	epd_plane_push(&p->pl, r, n);
 	p->kick = true;
 	mutex_unlock(&p->lock);
 }
@@ -137,16 +134,26 @@ void epd_submit(struct onyx_epd *p, const struct epd_request *r, int n, const u8
 
 	n = min(n, EPD_UI_MAX_RECTS);
 	for (i = 0; i < n; i++)
-		epd_convert_update(rgba, pitch, p->grey_in, EPD_W, r[i].left, r[i].top, r[i].width, r[i].height,
-				   r[i].flags | (y1_ordered ? EPD_CONV_Y1_ORDERED : 0), false, bgr, p->lut, p->err);
+		epd_convert_update(rgba, pitch, p->pl.in, EPD_W, r[i].left, r[i].top, r[i].width, r[i].height,
+				   false, bgr, p->lut);
 	epd_push(p, r, n);
 }
 
 void epd_submit_grey(struct onyx_epd *p, const struct epd_request *r, const u8 *grey)
 {
-	epd_convert_grey8(grey, EPD_W, p->grey_in, EPD_W, r->left, r->top, r->width, r->height,
-			  r->flags | (y1_ordered ? EPD_CONV_Y1_ORDERED : 0), p->lut, p->err);
+	epd_convert_grey8(grey, EPD_W, p->pl.in, EPD_W, r->left, r->top, r->width, r->height, p->lut);
 	epd_push(p, r, 1);
+}
+
+void epd_start(struct onyx_epd *p)
+{
+	u32 conv = READ_ONCE(y1_ordered) ? EPD_CONV_Y1_ORDERED : 0;
+	struct epd_decision d;
+	int ret;
+
+	while (epd_plane_pop(&p->pl, p->eng, conv, &d, &ret))
+		if (ret)
+			drm_dbg(&p->drm, "update mode %d dropped: %d\n", d.upd.mode, ret);
 }
 
 void epd_request(struct onyx_epd *p, const struct onyx_epdc_upd *u, const u8 *rgba, u32 pitch, bool bgr)

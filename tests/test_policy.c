@@ -115,6 +115,32 @@ TEST(policy_a2_entry_is_du_when_cleaning)
 	EXPECT(apply(&p, GC16, 0, 8), GC16, true, false);
 }
 
+TEST(policy_a2_repeats_unless_asked_once)
+{
+	struct epd_request r = { .width = 8, .height = 8, .mode = A2 };
+	struct epd_decision d[2];
+	struct epd_policy p;
+
+	epd_policy_init(&p, true);
+	CHECK_EQ(apply(&p, A2, 0, 0).upd.repeat, true);
+	CHECK_EQ(apply(&p, GC16, 0, 0).upd.repeat, false);
+	CHECK_EQ(apply(&p, A2, 0, 0).upd.repeat, false);
+	CHECK_EQ(apply(&p, A2, 0, 0).upd.repeat, true);
+	r.once = true;
+	epd_policy_apply(&p, &r, &d[0]);
+	CHECK_EQ(d[0].upd.mode, A2);
+	CHECK_EQ(d[0].upd.repeat, false);
+	epd_policy_apply_group(&p, &r, 1, d);
+	CHECK_EQ(d[0].upd.repeat, false);
+	r.once = false;
+	epd_policy_apply_group(&p, &r, 1, d);
+	CHECK_EQ(d[0].upd.repeat, true);
+	p.a2_once = true;
+	CHECK_EQ(apply(&p, A2, 0, 0).upd.repeat, false);
+	p.a2_once = false;
+	CHECK_EQ(apply(&p, A2, 0, 0).upd.repeat, true);
+}
+
 static void apply_group(struct epd_policy *p, int mode, int update_mode, struct epd_decision *d)
 {
 	struct epd_request r[3];
@@ -228,7 +254,7 @@ TEST(queue_barrier_waits_for_the_engine)
 	CHECK_EQ(out.upd.marker, 2);
 }
 
-TEST(queue_merges_overlapping_tail_of_the_same_kind)
+TEST(queue_keeps_overlapping_updates_apart)
 {
 	struct epd_queue q;
 	struct epd_decision d, out;
@@ -239,9 +265,79 @@ TEST(queue_merges_overlapping_tail_of_the_same_kind)
 	epd_queue_push(&q, &d);
 	d = dec(25, 5, 10, 10, DU, false, 2);
 	epd_queue_push(&q, &d);
-	CHECK_EQ(q.n, 1);
+	CHECK_EQ(q.n, 2);
+	CHECK_EQ(q.coalesced, 0);
+	CHECK(epd_queue_pop(&q, false, &out));
+	CHECK_EQ(out.upd.left, 10);
+	CHECK_EQ(out.upd.top, 10);
+	CHECK_EQ(out.upd.width, 20);
+	CHECK_EQ(out.upd.height, 20);
+	CHECK_EQ(out.upd.marker, 1);
+}
+
+TEST(queue_absorbs_an_update_inside_a_queued_one)
+{
+	struct epd_queue q;
+	struct epd_decision d, out;
+
+	epd_queue_init(&q);
+	q.merge = true;
+	d = dec(10, 10, 20, 20, GC16, false, 1);
+	epd_queue_push(&q, &d);
+	d = dec(40, 40, 4, 4, GC16, false, 2);
+	epd_queue_push(&q, &d);
+	d = dec(12, 12, 8, 8, GC16, false, 3);
+	epd_queue_push(&q, &d);
+	CHECK_EQ(q.n, 2);
 	CHECK_EQ(q.coalesced, 1);
-	d = dec(100, 100, 4, 4, DU, false, 3);
+	d = dec(36, 36, 12, 12, GC16, false, 4);
+	epd_queue_push(&q, &d);
+	CHECK_EQ(q.n, 2);
+	CHECK_EQ(q.coalesced, 2);
+	CHECK(epd_queue_pop(&q, false, &out));
+	CHECK_EQ(out.upd.left, 10);
+	CHECK_EQ(out.upd.width, 20);
+	CHECK_EQ(out.upd.marker, 3);
+	CHECK(epd_queue_pop(&q, false, &out));
+	CHECK_EQ(out.upd.left, 36);
+	CHECK_EQ(out.upd.top, 36);
+	CHECK_EQ(out.upd.width, 12);
+	CHECK_EQ(out.upd.height, 12);
+	CHECK_EQ(out.upd.marker, 4);
+}
+
+TEST(queue_joins_updates_that_tile)
+{
+	static const u16 at[4][4] = { { 10, 30, 20, 5 }, { 10, 25, 20, 9 }, { 30, 10, 3, 20 }, { 4, 10, 6, 20 } };
+	static const u16 want[4][4] = { { 10, 10, 20, 25 }, { 10, 10, 20, 24 }, { 10, 10, 23, 20 }, { 4, 10, 26, 20 } };
+	struct epd_queue q;
+	struct epd_decision d, out;
+	u32 i;
+
+	for (i = 0; i < 4; i++) {
+		epd_queue_init(&q);
+		q.merge = true;
+		d = dec(10, 10, 20, 20, A2, true, 1);
+		epd_queue_push(&q, &d);
+		d = dec(at[i][0], at[i][1], at[i][2], at[i][3], A2, true, 2);
+		epd_queue_push(&q, &d);
+		CHECK_EQ(q.n, 1);
+		CHECK(epd_queue_pop(&q, false, &out));
+		CHECK_EQ(out.upd.left, want[i][0]);
+		CHECK_EQ(out.upd.top, want[i][1]);
+		CHECK_EQ(out.upd.width, want[i][2]);
+		CHECK_EQ(out.upd.height, want[i][3]);
+	}
+}
+
+TEST(queue_only_joins_the_same_kind)
+{
+	struct epd_queue q;
+	struct epd_decision d;
+
+	epd_queue_init(&q);
+	q.merge = true;
+	d = dec(200, 100, 4, 4, DU, false, 3);
 	epd_queue_push(&q, &d);
 	d = dec(100, 100, 4, 4, GC16, false, 4);
 	epd_queue_push(&q, &d);
@@ -254,13 +350,90 @@ TEST(queue_merges_overlapping_tail_of_the_same_kind)
 	d.flags = 8;
 	d.barrier = true;
 	epd_queue_push(&q, &d);
-	CHECK_EQ(q.n, 6);
+	d = dec(100, 100, 4, 4, A2, true, 8);
+	epd_queue_push(&q, &d);
+	d.upd.repeat = true;
+	epd_queue_push(&q, &d);
+	CHECK_EQ(q.n, 7);
+	d = dec(100, 100, 4, 4, DU, false, 9);
+	epd_queue_push(&q, &d);
+	CHECK_EQ(q.n, 8);
+	CHECK_EQ(q.coalesced, 0);
+}
+
+TEST(queue_full_update_replaces_queued_fast_updates_it_covers)
+{
+	struct epd_queue q;
+	struct epd_decision d, out;
+
+	epd_queue_init(&q);
+	q.merge = true;
+	d = dec(0, 0, 8, 8, GC16, false, 1);
+	epd_queue_push(&q, &d);
+	d = dec(10, 10, 20, 20, DU, true, 2);
+	d.barrier = true;
+	epd_queue_push(&q, &d);
+	d = dec(10, 40, 20, 20, DU, true, 3);
+	epd_queue_push(&q, &d);
+	d = dec(12, 12, 4, 4, A2, true, 4);
+	epd_queue_push(&q, &d);
+	d = dec(8, 8, 30, 30, GC16, true, 5);
+	epd_queue_push(&q, &d);
+	CHECK_EQ(q.n, 3);
+	CHECK_EQ(q.coalesced, 2);
+	CHECK(epd_queue_pop(&q, true, &out));
+	CHECK_EQ(out.upd.marker, 1);
+	CHECK(!epd_queue_pop(&q, true, &out));
 	CHECK(epd_queue_pop(&q, false, &out));
-	CHECK_EQ(out.upd.left, 10);
-	CHECK_EQ(out.upd.top, 5);
-	CHECK_EQ(out.upd.width, 25);
-	CHECK_EQ(out.upd.height, 25);
-	CHECK_EQ(out.upd.marker, 2);
+	CHECK_EQ(out.upd.marker, 3);
+	CHECK(epd_queue_pop(&q, true, &out));
+	CHECK_EQ(out.upd.marker, 5);
+}
+
+TEST(queue_full_update_takes_over_the_barrier_of_the_last_one_it_replaces)
+{
+	struct epd_queue q;
+	struct epd_decision d, out;
+
+	epd_queue_init(&q);
+	q.merge = true;
+	d = dec(10, 10, 20, 20, DU, true, 2);
+	d.barrier = true;
+	epd_queue_push(&q, &d);
+	d = dec(0, 0, 40, 40, 5, true, 3);
+	epd_queue_push(&q, &d);
+	CHECK_EQ(q.n, 1);
+	CHECK(!epd_queue_pop(&q, true, &out));
+	CHECK(epd_queue_pop(&q, false, &out));
+	CHECK_EQ(out.upd.marker, 3);
+}
+
+TEST(queue_keeps_queued_updates_a_new_one_does_not_replace)
+{
+	struct epd_queue q;
+	struct epd_decision d;
+
+	epd_queue_init(&q);
+	q.merge = true;
+	d = dec(10, 10, 20, 20, A2, true, 1);
+	epd_queue_push(&q, &d);
+	d = dec(0, 0, 40, 40, GC16, false, 2);
+	epd_queue_push(&q, &d);
+	d = dec(0, 0, 40, 40, DU, true, 3);
+	epd_queue_push(&q, &d);
+	d = dec(12, 0, 40, 40, GC16, true, 4);
+	epd_queue_push(&q, &d);
+	CHECK_EQ(q.n, 4);
+	d = dec(0, 0, 60, 60, GC16, true, 5);
+	epd_queue_push(&q, &d);
+	CHECK_EQ(q.n, 2);
+
+	epd_queue_init(&q);
+	d = dec(10, 10, 20, 20, A2, true, 1);
+	epd_queue_push(&q, &d);
+	d = dec(0, 0, 40, 40, GC16, true, 2);
+	epd_queue_push(&q, &d);
+	CHECK_EQ(q.n, 2);
 }
 
 TEST(queue_does_not_merge_unless_enabled)

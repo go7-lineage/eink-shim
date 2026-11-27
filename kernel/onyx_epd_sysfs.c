@@ -53,7 +53,7 @@ static ssize_t status_show(struct device *dev, struct device_attribute *attr, ch
 
 	mutex_lock(&p->lock);
 	busy = p->eng && epd_engine_busy(p->eng);
-	queued = p->q.n;
+	queued = p->pl.q.n;
 	pmic = !!p->pmic;
 	pmic_night = p->pmic_night;
 	pmic_rb_ok = p->pmic_rb_ok;
@@ -83,7 +83,8 @@ static ssize_t status_show(struct device *dev, struct device_attribute *attr, ch
 	n += epd_emit_stat(buf, n, "commit", &p->st_commit, "\n ");
 	n += epd_emit_stat(buf, n, "link up", &p->st_link, ",");
 	n += epd_emit_stat(buf, n, "power up", &p->st_power, ",");
-	n += epd_emit_stat(buf, n, "first frame", &p->st_first, "\n");
+	n += epd_emit_stat(buf, n, "first frame", &p->st_first, ",");
+	n += epd_emit_stat(buf, n, "period", &p->st_period, "\n");
 	n += sysfs_emit_at(buf, n, "engine busy %d, queued %d, link %d, ", busy, queued, READ_ONCE(p->link_on));
 	n += sysfs_emit_at(buf, n, "buffers shown %d inflight %d pending %d filling %d, link request %d\n",
 			   ring.shown, ring.inflight, ring.pending, ring.filling, ring.link_req);

@@ -262,6 +262,7 @@ echo speed > $S/ui_mode
 pattern white
 log "night: $(fake)"
 
+echo 0 > $S/cut_frame_num || fail "cut 0"
 i=0
 for m in 2 4 1 5 2 16 15 14 2 4 4 1 2 5 2 3 2; do
 	set -- white black stripes checker diagonal
@@ -281,6 +282,20 @@ for m in 2 4 1 5 2 16 15 14 2 4 4 1 2 5 2 3 2; do
 	i=$((i + 1))
 done
 log "modes: $(fake)"
+period() { sed -n "s/.* period \([0-9]*\)\/\([0-9]*\)\/.*/\\$1/p" $S/status; }
+[ "$(period 2)" -ge 11700 ] || fail "average frame period $(period 2) us, want the waveform's 85 Hz"
+echo 20000 > /sys/module/onyx_epd/parameters/frame_us || fail "frame_us 20000"
+pattern black 14
+[ "$(period 1)" -ge 20000 ] || fail "frame period $(period 1) us with frame_us 20000"
+echo 0 > /sys/module/onyx_epd/parameters/frame_us || fail "frame_us 0"
+[ "$(cat /sys/module/onyx_epd/parameters/a2_repeat)" = Y ] || fail "a2_repeat default: $(cat /sys/module/onyx_epd/parameters/a2_repeat)"
+[ "$(cat /sys/module/onyx_epd/parameters/y1_ordered)" = N ] || fail "y1_ordered default: $(cat /sys/module/onyx_epd/parameters/y1_ordered)"
+echo 0 > /sys/module/onyx_epd/parameters/a2_repeat || fail "a2_repeat 0"
+pattern white 4
+pattern black 4
+echo 1 > /sys/module/onyx_epd/parameters/a2_repeat || fail "a2_repeat 1"
+pattern white 4
+log "pacing and repeat: $(fake)"
 grep -q "^pmic night: unavailable$" $S/status || fail "pmic line: $(tail -1 $S/status)"
 [ "$(cat /sys/module/onyx_epd/parameters/night_pmic)" = N ] || fail "night_pmic default: $(cat /sys/module/onyx_epd/parameters/night_pmic)"
 echo 1 > /sys/module/onyx_epd/parameters/night_pmic || fail "night_pmic 1"

@@ -12,6 +12,9 @@ struct epd_table {
 	u16 n;
 	int users;	/* active LUTs */
 	bool retired;
+	bool staged;
+	u8 drive[256];
+	u8 target[16];
 };
 
 struct epd_lut {
@@ -21,6 +24,10 @@ struct epd_lut {
 	u16 frame;
 	u16 y0, y1, x0, x1;
 	u32 seq;
+	int mode;
+	bool full;
+	bool repeat;
+	bool quiet;
 };
 
 struct epd_req {
@@ -51,6 +58,7 @@ struct epd_engine {
 	u8 zero[256];
 	const u8 *cur[EPD_IDLE + 1];
 	int finished[EPD_NLUTS];
+	struct epd_lut done[EPD_NLUTS];
 };
 
 static bool lut_bit(const u64 *m, int i)
@@ -88,6 +96,47 @@ static void table_put(struct epd_table *t)
 {
 	if (--t->users == 0 && t->retired)
 		table_free(t);
+}
+
+static u8 state_idle(u8 level)
+{
+	return (u8)(level << 4 | level);
+}
+
+static bool stage_level(u8 state)
+{
+	u8 level = state >> 4;
+
+	return level == 0 || level == 15 || level != (state & 15);
+}
+
+static void table_index(struct epd_table *ct)
+{
+	bool ok[16] = { false }, any = false;
+	int f, i, nw, old, lv, d;
+
+	for (i = 0; i < 256; i++)
+		for (f = 0; f < ct->n && !ct->drive[i]; f++)
+			ct->drive[i] = ct->t[f * 256 + i] != 0;
+	for (nw = 0; nw < 16; nw++)
+		for (old = 0; old < 16; old++)
+			if (old != nw && ct->drive[nw << 4 | old]) {
+				ok[nw] = true;
+				any = true;
+			}
+	for (lv = 0; lv < 16; lv++) {
+		ct->target[lv] = (u8)lv;
+		for (d = 0; any && d < 16; d++) {
+			if (lv - d >= 0 && ok[lv - d]) {
+				ct->target[lv] = (u8)(lv - d);
+				break;
+			}
+			if (lv + d < 16 && ok[lv + d]) {
+				ct->target[lv] = (u8)(lv + d);
+				break;
+			}
+		}
+	}
 }
 
 static int build_table(struct epd_engine *e, struct epd_table **slotp, int slot, bool full,
@@ -138,9 +187,12 @@ static int build_table(struct epd_engine *e, struct epd_table **slotp, int slot,
 		n = epd_tables4(src, nfr, e->wf.levels, slot, &e->cfg.tables, ct->t, p4);
 		if (n > 0 && !full)
 			memcpy(ct->t, p4, (size_t)n * 256);
+		ct->staged = slot == e->cfg.tables.a2_slot && e->cfg.tables.a2_clean_mode == 2;
 	}
-	if (n > 0)
+	if (n > 0) {
 		ct->n = (u16)n;
+		table_index(ct);
+	}
 out:
 	if (n < 0)
 		table_free(ct);
@@ -262,27 +314,38 @@ static void claim_add(struct claim *c, u32 x, u32 y)
 {
 	c->n++;
 	c->y0 = (u16)(y < c->y0 ? y : c->y0);
-	c->y1 = (u16)(y + 1);
+	c->y1 = (u16)(y + 1 > c->y1 ? y + 1 : c->y1);
 	c->x0 = (u16)(x < c->x0 ? x : c->x0);
 	c->x1 = (u16)(x + 1 > c->x1 ? x + 1 : c->x1);
 }
 
-static void activate(struct epd_engine *e, const struct claim *c, struct epd_table *table,
-		     const struct epd_update *u)
+static struct epd_lut *activate(struct epd_engine *e, const struct claim *c, struct epd_table *table,
+				u32 left, u32 top, u32 marker)
 {
 	struct epd_lut *l = &e->lut[c->lut];
 
+	memset(l, 0, sizeof(*l));
 	l->active = true;
-	l->marker = u->marker;
+	l->marker = marker;
 	l->table = table;
 	table->users++;
-	l->frame = 0;
-	l->y0 = u->top + c->y0;
-	l->y1 = u->top + c->y1;
-	l->x0 = u->left + c->x0;
-	l->x1 = u->left + c->x1;
+	l->y0 = (u16)(top + c->y0);
+	l->y1 = (u16)(top + c->y1);
+	l->x0 = (u16)(left + c->x0);
+	l->x1 = (u16)(left + c->x1);
 	l->seq = e->seq++;
 	e->active++;
+	return l;
+}
+
+static void activate_update(struct epd_engine *e, const struct claim *c, struct epd_table *table,
+			    const struct epd_update *u, int mode, bool repeat)
+{
+	struct epd_lut *l = activate(e, c, table, u->left, u->top, u->marker);
+
+	l->mode = mode;
+	l->full = mode == u->mode ? u->full : true;
+	l->repeat = repeat && table->staged;
 }
 
 static void regal_aa_mark(struct epd_engine *e, const struct epd_update *u)
@@ -305,7 +368,7 @@ static void regal_aa_mark(struct epd_engine *e, const struct epd_update *u)
 static int merge(struct epd_engine *e, struct epd_req *r)
 {
 	const struct epd_update *u = &r->upd;
-	struct epd_table *table, *aa_table = NULL;
+	struct epd_table *table, *aat = NULL, *fallback = NULL;
 	struct claim c = { .y0 = 0xffff, .x0 = 0xffff }, ca = { .lut = -1, .y0 = 0xffff, .x0 = 0xffff };
 	struct claim busy = { .lut = -1, .y0 = 0xffff, .x0 = 0xffff };
 	bool aa = e->cfg.regal_aa && epd_mode_has_aa(u->mode), older = older_overlaps(e, r);
@@ -314,11 +377,13 @@ static int merge(struct epd_engine *e, struct epd_req *r)
 
 	ret = get_table(e, u->mode, u->full, false, &table);
 	if (!ret && aa)
-		ret = get_table(e, u->mode, u->full, true, &aa_table);
+		ret = get_table(e, u->mode, u->full, true, &aat);
 	if (ret) {
 		req_free(r);
 		return ret;
 	}
+	if (u->mode == EPD_MODE_A2 && get_table(e, EPD_MODE_DU, true, false, &fallback))
+		fallback = NULL;
 	if (aa)
 		regal_aa_mark(e, u);
 	c.lut = free_lut(e, -1);
@@ -333,33 +398,44 @@ static int merge(struct epd_engine *e, struct epd_req *r)
 		for (x = r->x0; x < r->x1; x++) {
 			size_t p = row + x;
 			bool edge = aa && e->mark[rrow + x];
+			struct epd_table *tab = edge ? aat : table;
 			struct claim *cl = edge ? &ca : &c;
-			u8 o, tgt;
+			u8 o, tgt, cur, idx;
 
 			if (!r->mask[rrow + x])
 				continue;
 			o = e->owner[p];
-			tgt = r->target[rrow + x];
-			if (o == EPD_IDLE && older && older_wants(e, r, u->left + x, u->top + y)) {
+			if (o != EPD_IDLE) {
+				r->wait[o >> 6] |= 1ull << (o & 63);
+				claim_add(&busy, x, y);
+				continue;
+			}
+			if (older && older_wants(e, r, u->left + x, u->top + y)) {
 				r->wait_any = true;
 				claim_add(&busy, x, y);
 				continue;
 			}
-			if (o == EPD_IDLE && !u->full && !edge && (e->state[p] >> 4) == tgt) {
-				r->mask[rrow + x] = 0;	/* partial: target unchanged */
+			tgt = r->target[rrow + x];
+			cur = e->state[p] >> 4;
+			idx = (u8)(tgt << 4 | cur);
+			if (fallback && fallback->drive[idx] &&
+			    (!tab->drive[idx] || (tab->staged && !stage_level(e->state[p])))) {
+				tab = fallback;
+				cl = &ca;
+			}
+			if (!tab->drive[idx] || (!u->full && !edge && cur == tgt)) {
+				e->state[p] = state_idle(cur);
+				r->mask[rrow + x] = 0;
 				continue;
 			}
-			if (o == EPD_IDLE && edge && ca.lut < 0)
+			if (cl == &ca && ca.lut < 0)
 				ca.lut = free_lut(e, c.lut);
-			if (o != EPD_IDLE || cl->lut < 0) {
-				if (o != EPD_IDLE)
-					r->wait[o >> 6] |= 1ull << (o & 63);
-				else
-					r->wait_any = true;
+			if (cl->lut < 0) {
+				r->wait_any = true;
 				claim_add(&busy, x, y);
 				continue;
 			}
-			e->state[p] = (u8)(tgt << 4 | e->state[p] >> 4);
+			e->state[p] = idx;
 			e->owner[p] = (u8)cl->lut;
 			r->mask[rrow + x] = 0;
 			claim_add(cl, x, y);
@@ -367,9 +443,9 @@ static int merge(struct epd_engine *e, struct epd_req *r)
 	}
 
 	if (c.n)
-		activate(e, &c, table, u);
+		activate_update(e, &c, table, u, u->mode, u->repeat);
 	if (ca.n)
-		activate(e, &ca, aa_table, u);
+		activate_update(e, &ca, aa ? aat : fallback, u, aa ? u->mode : EPD_MODE_DU, false);
 	if (busy.n) {
 		r->y0 = busy.y0;
 		r->y1 = busy.y1;
@@ -448,7 +524,7 @@ int epd_engine_submit(struct epd_engine *e, const struct epd_update *u, const u8
 		const u8 *src = grey8 + (size_t)(u->top + y) * stride + u->left;
 
 		for (x = 0; x < u->width; x++)
-			r->target[(size_t)y * u->width + x] = src[x] >> 4;
+			r->target[(size_t)y * u->width + x] = table->target[src[x] >> 4];
 	}
 	memset(r->mask, 1, n);
 	r->y1 = u->height;
@@ -470,10 +546,84 @@ static void release_owner(struct epd_engine *e, const struct epd_lut *l, u8 id)
 
 	for (y = l->y0; y < l->y1; y++) {
 		u8 *o = e->owner + (size_t)y * e->w + l->x0;
+		u8 *s = e->state + (size_t)y * e->w + l->x0;
 
-		for (x = 0; x < n; x++)
-			o[x] = o[x] == id ? EPD_IDLE : o[x];
+		if (!l->table->staged) {
+			for (x = 0; x < n; x++) {
+				bool mine = o[x] == id;
+
+				s[x] = mine ? (u8)((s[x] & 0xf0) | s[x] >> 4) : s[x];
+				o[x] = mine ? EPD_IDLE : o[x];
+			}
+			continue;
+		}
+		for (x = 0; x < n; x++) {
+			u8 tgt = s[x] >> 4, level;
+
+			if (o[x] != id)
+				continue;
+			level = epd_a2_level(tgt, s[x] & 15);
+			s[x] = (u8)(level << 4 | tgt);
+			o[x] = EPD_IDLE;
+		}
 	}
+}
+
+static void touch_up(struct epd_engine *e, const struct epd_table *table, struct claim *c, u32 x, u32 y,
+		     bool white)
+{
+	u8 at = white ? 0xff : 0x00, idx = white ? 0xf8 : 0x07;
+	u32 qx, qy;
+
+	if (!table->drive[idx])
+		return;
+	for (qy = y ? y - 1 : y; qy <= y + 1 && qy < e->h; qy++)
+		for (qx = x ? x - 1 : x; qx <= x + 1 && qx < e->w; qx++) {
+			size_t q = (size_t)qy * e->w + qx;
+
+			if (e->owner[q] != EPD_IDLE || e->state[q] != at)
+				continue;
+			e->state[q] = idx;
+			e->owner[q] = (u8)c->lut;
+			claim_add(c, qx, qy);
+		}
+}
+
+static void repeat(struct epd_engine *e, const struct epd_lut *l)
+{
+	struct claim c = { .lut = free_lut(e, -1), .y0 = 0xffff, .x0 = 0xffff };
+	struct epd_table *table = NULL;
+	struct epd_lut *next;
+	u32 x, y;
+
+	if (c.lut >= 0 && get_table(e, l->mode, l->full, false, &table))
+		c.lut = -1;
+	for (y = l->y0; y < l->y1; y++) {
+		size_t row = (size_t)y * e->w;
+
+		for (x = l->x0; x < l->x1; x++) {
+			u8 s = e->state[row + x], idx = (u8)(s << 4 | s >> 4);
+
+			if (e->owner[row + x] != EPD_IDLE || s >> 4 == (s & 15))
+				continue;
+			if (c.lut < 0 || !table->drive[idx]) {
+				e->state[row + x] = state_idle(s >> 4);
+				continue;
+			}
+			e->state[row + x] = idx;
+			e->owner[row + x] = (u8)c.lut;
+			claim_add(&c, x, y);
+			if (s == 0xef || s == 0x10)
+				touch_up(e, table, &c, x, y, s == 0xef);
+		}
+	}
+	if (!c.n)
+		return;
+	next = activate(e, &c, table, 0, 0, l->marker);
+	next->mode = l->mode;
+	next->full = l->full;
+	next->repeat = true;
+	next->quiet = true;
 }
 
 static void clear_words(u32 *row, u32 from, u32 to)
@@ -563,7 +713,9 @@ int epd_engine_tick(struct epd_engine *e, u32 *buf)
 		table_put(l->table);
 		l->active = false;
 		e->active--;
-		marker_complete(e, l->marker);
+		e->done[i] = *l;
+		if (!l->quiet)
+			marker_complete(e, l->marker);
 	}
 	if (!nfin)
 		return 1;
@@ -592,6 +744,9 @@ int epd_engine_tick(struct epd_engine *e, u32 *buf)
 		if (merge(e, r))
 			marker_complete(e, marker);
 	}
+	for (i = 0; i < nfin; i++)
+		if (e->done[i].repeat)
+			repeat(e, &e->done[i]);
 	return 1;
 }
 
@@ -601,6 +756,16 @@ int epd_engine_mode_frames(struct epd_engine *e, int mode, bool full)
 	int ret = get_table(e, mode, full, false, &table);
 
 	return ret ? ret : table->n;
+}
+
+int epd_engine_frame_rate(const struct epd_engine *e)
+{
+	return e->wf.frame_rate;
+}
+
+int epd_engine_level(const struct epd_engine *e, u32 x, u32 y)
+{
+	return x < e->w && y < e->h ? e->state[(size_t)y * e->w + x] >> 4 : -EINVAL;
 }
 
 int epd_engine_set_temp_mc(struct epd_engine *e, int temp_mc)

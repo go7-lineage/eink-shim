@@ -13,6 +13,7 @@ struct epd_update {
 	u16 top, left, width, height;
 	int mode;
 	bool full;
+	bool repeat;
 	u32 marker;
 };
 
@@ -38,5 +39,7 @@ bool epd_engine_busy(const struct epd_engine *e);
 int epd_engine_tick(struct epd_engine *e, u32 *buf);
 void epd_row_scalar(const u8 *state, const u8 *owner, const u8 *const *cur, u32 *out, u32 npix);
 int epd_engine_mode_frames(struct epd_engine *e, int mode, bool full);
+int epd_engine_frame_rate(const struct epd_engine *e);
+int epd_engine_level(const struct epd_engine *e, u32 x, u32 y);
 
 #endif

@@ -36,6 +36,7 @@ struct epd_ui {
 	int settled;
 	int settle_mode;
 	bool big_pending;
+	bool gc_pending;
 	int marker;
 	bool flash_pending, have_flash;
 	u64 last_flash;

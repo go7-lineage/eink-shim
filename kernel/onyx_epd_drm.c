@@ -66,7 +66,6 @@ static int epd_thread(void *data)
 	struct onyx_epd *p = data;
 
 	while (!kthread_should_stop()) {
-		struct epd_decision d;
 		bool busy, was_busy;
 		u64 t0;
 		int ret;
@@ -81,11 +80,8 @@ static int epd_thread(void *data)
 			continue;
 		}
 		was_busy = p->eng && epd_engine_busy(p->eng);
-		while (p->eng && epd_queue_pop(&p->q, epd_engine_busy(p->eng), &d)) {
-			ret = epd_engine_submit(p->eng, &d.upd, p->grey, EPD_W);
-			if (ret)
-				drm_dbg(&p->drm, "update mode %d dropped: %d\n", d.upd.mode, ret);
-		}
+		if (p->eng)
+			epd_start(p);
 		busy = p->eng && epd_engine_busy(p->eng);
 		if (busy && !was_busy && !READ_ONCE(p->t_start))
 			WRITE_ONCE(p->t_start, ktime_get_ns());
@@ -102,7 +98,7 @@ static int epd_thread(void *data)
 			epd_stat(&p->st_tick, t0);
 			p->tick_cpu = raw_smp_processor_id();
 			busy = epd_engine_busy(p->eng);
-			if (!busy && p->q.n)
+			if (!busy && p->pl.q.n)
 				p->kick = true;
 			mutex_unlock(&p->lock);
 			if (ret == 1)
@@ -174,6 +170,8 @@ static void epd_setup_work(struct work_struct *w)
 				p->eng = eng;
 				epd_engine_set_temp_mc(eng, p->temp_mc);
 				mutex_unlock(&p->lock);
+				if (epd_engine_frame_rate(eng) > 0)
+					WRITE_ONCE(p->frame_ns, NSEC_PER_SEC / epd_engine_frame_rate(eng));
 				drm_info(&p->drm, "waveform %s loaded\n", waveform);
 				epd_load_images(p);
 			} else {
@@ -205,7 +203,7 @@ static bool epd_hold(struct onyx_epd *p, unsigned int wait_ms, const char *why)
 	for (;;) {
 		mutex_lock(&p->lock);
 		engine = p->eng && epd_engine_busy(p->eng);
-		queued = p->q.n;
+		queued = p->pl.q.n;
 		busy = engine || queued;
 		if (!busy || !epd_output_ready(p) || ktime_after(ktime_get(), end)) {
 			WRITE_ONCE(p->suspended, true);
@@ -295,6 +293,11 @@ static void epd_ui_free(void *data)
 	epd_ui_release(data);
 }
 
+static void epd_plane_free(void *data)
+{
+	epd_plane_release(data);
+}
+
 static void epd_vfree(void *data)
 {
 	vfree(data);
@@ -381,9 +384,6 @@ static int onyx_epd_probe(struct platform_device *pdev)
 	p->ui_cfg = (struct epd_ui_cfg){ .mode = EPD_UI_SPEED, .gc_interval = 20, .big_pct = 50, .a2cut = 3 };
 	p->levels = (struct epd_levels)EPD_LEVELS_IDENTITY;
 	p->cut = 3;
-	epd_policy_init(&p->pol, true);
-	epd_queue_init(&p->q);
-	p->q.merge = true;
 
 	p->dsi_np = of_parse_phandle(dev->of_node, "onyx,dsi", 0);
 	if (!p->dsi_np)
@@ -404,19 +404,20 @@ static int onyx_epd_probe(struct platform_device *pdev)
 	if (ret)
 		return ret;
 
-	p->grey = epd_devm_vzalloc(dev, EPD_W * EPD_H);
-	p->grey_in = epd_devm_vzalloc(dev, EPD_W * EPD_H);
 	p->frame = epd_devm_vzalloc(dev, epd_frame_words(t) * 4);
 	p->tmpl = epd_devm_vzalloc(dev, epd_frame_words(t) * 4);
-	p->err = devm_kcalloc(dev, 3 * EPD_W + 12, sizeof(*p->err), GFP_KERNEL);
 	p->fbmap_pages = devm_kcalloc(dev, EPD_MAP_PAGES, sizeof(*p->fbmap_pages), GFP_KERNEL);
-	if (!p->grey || !p->grey_in || !p->frame || !p->tmpl || !p->err || !p->fbmap_pages)
+	if (!p->frame || !p->tmpl || !p->fbmap_pages)
 		return -ENOMEM;
+	ret = epd_plane_init(&p->pl, EPD_W, EPD_H, true);
+	if (ret)
+		return ret;
+	ret = devm_add_action_or_reset(dev, epd_plane_free, &p->pl);
+	if (ret)
+		return ret;
 	ret = devm_add_action_or_reset(dev, epd_fbmap_free, p);
 	if (ret)
 		return ret;
-	memset(p->grey, 0xff, EPD_W * EPD_H);
-	memset(p->grey_in, 0xff, EPD_W * EPD_H);
 	epd_frame_template(t, p->frame);
 	epd_frame_template(t, p->tmpl);
 	p->ui_ok = !epd_ui_init(&p->ui, EPD_W, EPD_H);

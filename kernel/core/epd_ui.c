@@ -318,7 +318,7 @@ struct ui_decision {
 
 static void ui_decide(struct epd_ui *u, int mode, int gc_interval, u64 now, struct ui_decision *d)
 {
-	bool had = u->have_frame, gc = false;
+	bool had = u->have_frame, gc = false, due = false;
 	u64 since = had && now > u->last_frame ? now - u->last_frame : 0;
 #define QUIET_FOR(ms) (!had || since >= (ms))
 
@@ -326,7 +326,7 @@ static void ui_decide(struct epd_ui *u, int mode, int gc_interval, u64 now, stru
 	u->have_frame = true;
 	d->mode_changed = !u->have_mode || u->last_mode != mode;
 	if (d->mode_changed) {
-		gc = u->have_mode;
+		gc = true;
 		u->last_mode = mode;
 		u->have_mode = true;
 		u->settled = 0;
@@ -334,7 +334,13 @@ static void ui_decide(struct epd_ui *u, int mode, int gc_interval, u64 now, stru
 	if (QUIET_FOR(UI_INTERACTION_MS) && gc_interval > 0) {
 		if (u->settled < 0x7fffffff)
 			u->settled++;
-		gc |= u->settled > gc_interval;
+		due = u->settled > gc_interval;
+	}
+	if (due && !gc && !ui_mode(mode)->debounced) {
+		u->settled = 0;
+		u->gc_pending = true;
+	} else {
+		gc |= due;
 	}
 	if (gc) {
 		u->settled = 0;
@@ -356,6 +362,7 @@ static int ui_marker(struct epd_ui *u)
 
 static void ui_upd(struct epd_request *r, u32 x, u32 y, u32 w, u32 h, int wf, u32 flag, bool full, int marker)
 {
+	r->once = false;
 	r->top = (u16)y;
 	r->left = (u16)x;
 	r->width = (u16)w;
@@ -384,6 +391,7 @@ static void ui_gc16_shown(struct epd_ui *u)
 {
 	u->settle_mode = -1;
 	u->big_pending = false;
+	u->gc_pending = false;
 	ui_burst_reset(u);
 	ui_transient_reset(u);
 	ui_dirty_reset(u);
@@ -444,7 +452,7 @@ int epd_ui_frame(struct epd_ui *u, const struct epd_ui_cfg *cfg, const u8 *rgba,
 	struct ui_decision d;
 	enum ui_diff diff = ui_diff(u, rgba, pitch, len);
 	bool tracked = diff == UI_CHANGED;
-	int marker;
+	int marker, n, i;
 
 	*cut = -1;
 	if (diff == UI_UNCHANGED)
@@ -455,8 +463,7 @@ int epd_ui_frame(struct epd_ui *u, const struct epd_ui_cfg *cfg, const u8 *rgba,
 	marker = ui_marker(u);
 
 	if (d.kind == UI_GC16) {
-		int n = 1;
-
+		n = 1;
 		if (d.mode_changed || !tracked || u->dirty_all || u->flash_pending) {
 			ui_full_shown(u, now);
 			ui_upd(out, 0, 0, u->w, u->h, UI_GC_WF, UI_GC_FLAG, true, marker);
@@ -476,19 +483,23 @@ int epd_ui_frame(struct epd_ui *u, const struct epd_ui_cfg *cfg, const u8 *rgba,
 		u->untracked = true;
 		u->dirty_all = true;
 		ui_upd(out, 0, 0, u->w, u->h, m->wf, m->flag, false, marker);
+		out->once = d.kind == UI_TRANSIENT;
 		return 1;
 	}
 	ui_spans_merge(u->h, u->dirty, u->rows);
-	u->big_pending = ui_burst_add(u, d.new_burst, cfg->big_pct);
+	u->big_pending = ui_burst_add(u, d.new_burst, ui_mode(cfg->mode)->debounced ? 0 : cfg->big_pct);
 	if (d.kind == UI_TRANSIENT)
 		ui_spans_merge(u->h, u->transient, u->rows);
-	return ui_send(u, u->rows, NULL, m->wf, m->flag, false, marker, out);
+	n = ui_send(u, u->rows, NULL, m->wf, m->flag, false, marker, out);
+	for (i = 0; i < n; i++)
+		out[i].once = d.kind == UI_TRANSIENT;
+	return n;
 }
 
 enum epd_ui_step epd_ui_step(struct epd_ui *u, u64 now, struct epd_request *out, int *n, u64 *wait)
 {
 	const struct epd_ui_span *a, *b;
-	bool flash = u->flash_pending, gc16 = true;
+	bool flash = u->flash_pending, gc16 = true, all;
 	int wf;
 	u32 flag;
 	u64 quiet;
@@ -500,11 +511,11 @@ enum epd_ui_step epd_ui_step(struct epd_ui *u, u64 now, struct epd_request *out,
 		quiet = UI_FLASH_QUIET_MS;
 		a = NULL;
 		b = NULL;
-	} else if (u->big_pending) {
+	} else if (u->gc_pending || u->big_pending) {
 		wf = UI_GC_WF;
 		flag = UI_GC_FLAG;
 		quiet = UI_BIG_QUIET_MS;
-		a = u->burst;
+		a = u->gc_pending ? u->dirty : u->burst;
 		b = u->transient;
 	} else if (u->settle_mode >= 0) {
 		gc16 = false;
@@ -525,9 +536,11 @@ enum epd_ui_step epd_ui_step(struct epd_ui *u, u64 now, struct epd_request *out,
 		u->settled = 0;
 		ui_burst_reset(u);
 	}
+	all = flash || u->untracked || (gc16 && u->gc_pending && u->dirty_all);
 	u->settle_mode = -1;
 	u->big_pending = false;
-	if (flash || u->untracked) {
+	u->gc_pending &= !gc16;
+	if (all) {
 		ui_upd(out, 0, 0, u->w, u->h, wf, flag, true, ui_marker(u));
 		*n = 1;
 		if (gc16)

@@ -321,82 +321,109 @@ TEST(convert_regal_aa_marks_white_next_to_dark)
 TEST(convert_update_stays_inside_the_rectangle)
 {
 	static u8 rgba[10 * 16 * 4], grey[10 * 16];
-	static int err[3 * 16 + 12];
 	u32 x, y;
 
 	randomize(rgba, sizeof(rgba), 5);
 	memset(grey, 0x5a, sizeof(grey));
-	epd_convert_update(rgba, 16 * 4, grey, 16, 3, 2, 9, 5, 0, false, false, NULL, err);
+	epd_convert_update(rgba, 16 * 4, grey, 16, 3, 2, 9, 5, false, false, NULL);
 	for (y = 0; y < 10; y++)
 		for (x = 0; x < 16; x++) {
 			const u8 *p = rgba + (y * 16 + x) * 4;
-			u8 want = (u8)((77 * p[0] + 151 * p[1] + 28 * p[2]) >> 8) & 0xf0;
+			u8 want = (u8)((77 * p[0] + 151 * p[1] + 28 * p[2]) >> 8);
 			bool in = x >= 3 && x < 12 && y >= 2 && y < 7;
 
 			CHECK_EQ(grey[y * 16 + x], in ? want : 0x5a);
 		}
 }
 
-TEST(convert_update_applies_gamma_then_dither)
+TEST(convert_update_applies_gamma_to_every_grey)
 {
 	static u8 rgba[8 * 16 * 4], grey[8 * 16], want[8 * 16], lut[256];
-	static int err[3 * 16 + 12], err2[3 * 16 + 12];
-	int i;
-
-	for (i = 0; i < 256; i++)
-		lut[i] = (u8)(i / 2 + 64);
-	randomize(rgba, sizeof(rgba), 6);
-	epd_convert_update(rgba, 16 * 4, grey, 16, 0, 0, 16, 8, 0x4000, false, true, lut, err);
-	epd_rgba_to_grey_scalar(rgba, 16 * 4, want, 16, 16, 8, 0xff, false, true);
-	epd_gamma(want, 16, 16, 8, lut, 0xff);
-	epd_dither_y4(want, 16, 8, 16, err2);
-	CHECK_MEM(grey, want, sizeof(grey));
-}
-
-TEST(convert_update_applies_gamma_before_quantizing)
-{
-	static u8 rgba[8 * 16 * 4], grey[8 * 16], want[8 * 16], lut[256];
-	static int err[3 * 16 + 12];
 	size_t i;
 
 	for (i = 0; i < 256; i++)
 		lut[i] = (u8)(255 - i);
 	randomize(rgba, sizeof(rgba), 9);
-	epd_convert_update(rgba, 16 * 4, grey, 16, 0, 0, 16, 8, 0x1000, false, false, lut, err);
-	epd_rgba_to_grey_scalar(rgba, 16 * 4, want, 16, 16, 8, 0xff, false, false);
+	epd_convert_update(rgba, 16 * 4, grey, 16, 0, 0, 16, 8, false, true, lut);
+	epd_rgba_to_grey_scalar(rgba, 16 * 4, want, 16, 16, 8, 0xff, false, true);
 	for (i = 0; i < sizeof(want); i++)
-		want[i] = lut[want[i]] & 0xf0;
+		want[i] = lut[want[i]];
 	CHECK_MEM(grey, want, sizeof(grey));
 }
 
-TEST(convert_update_ordered_y1_needs_both_flags)
+TEST(quantize_update_picks_the_dither_by_flag)
 {
-	static u8 rgba[8 * 16 * 4], grey[8 * 16], want[8 * 16];
+	static u8 src[8 * 16], grey[8 * 16], want[8 * 16];
 	static int err[3 * 16 + 12], err2[3 * 16 + 12];
 
-	randomize(rgba, sizeof(rgba), 8);
-	epd_convert_update(rgba, 16 * 4, grey, 16, 0, 0, 16, 8, 0x2000 | EPD_CONV_Y1_ORDERED, false, false,
-			   NULL, err);
-	epd_rgba_to_grey_scalar(rgba, 16 * 4, want, 16, 16, 8, 0xff, false, false);
+	randomize(src, sizeof(src), 8);
+	memcpy(grey, src, sizeof(src));
+	memcpy(want, src, sizeof(src));
+	CHECK(epd_quantize_update(grey, 16, 0, 0, 16, 8, 0x2000 | EPD_CONV_Y1_ORDERED, err));
 	epd_dither_y1_ordered(want, 16, 8, 16, 0, 0);
 	CHECK_MEM(grey, want, sizeof(grey));
 
-	epd_convert_update(rgba, 16 * 4, grey, 16, 0, 0, 16, 8, 0x2000, false, false, NULL, err);
-	epd_rgba_to_grey_scalar(rgba, 16 * 4, want, 16, 16, 8, 0xff, false, false);
+	memcpy(grey, src, sizeof(src));
+	memcpy(want, src, sizeof(src));
+	CHECK(epd_quantize_update(grey, 16, 0, 0, 16, 8, 0x2000, err));
 	epd_dither_y1(want, 16, 8, 16, err2, 0xff, false);
 	CHECK_MEM(grey, want, sizeof(grey));
 
-	epd_convert_update(rgba, 16 * 4, grey, 16, 0, 0, 16, 8, EPD_CONV_Y1_ORDERED, false, false, NULL, err);
-	epd_rgba_to_grey_scalar(rgba, 16 * 4, want, 16, 16, 8, 0xf0, false, false);
+	memcpy(grey, src, sizeof(src));
+	memcpy(want, src, sizeof(src));
+	memset(err2, 0, sizeof(err2));
+	CHECK(epd_quantize_update(grey, 16, 0, 0, 16, 8, 0x4000 | EPD_CONV_Y1_ORDERED, err));
+	epd_dither_y4(want, 16, 8, 16, err2);
 	CHECK_MEM(grey, want, sizeof(grey));
+
+	memcpy(grey, src, sizeof(src));
+	CHECK(!epd_quantize_update(grey, 16, 0, 0, 16, 8, EPD_CONV_Y1_ORDERED | 0x1000, err));
+	CHECK_MEM(grey, src, sizeof(grey));
+}
+
+TEST(quantize_update_stays_inside_the_rectangle)
+{
+	static const u32 flags[] = { 0x2000, 0x2000 | EPD_CONV_Y1_ORDERED, 0x4000, 0x0800, 0x0008 };
+	static u8 src[10 * 16], grey[10 * 16];
+	static int err[3 * 16 + 12];
+	size_t f;
+	u32 x, y;
+
+	randomize(src, sizeof(src), 12);
+	for (f = 0; f < ARRAY_LEN(flags); f++) {
+		memcpy(grey, src, sizeof(src));
+		CHECK(epd_quantize_update(grey, 16, 3, 2, 9, 5, flags[f], err));
+		for (y = 0; y < 10; y++)
+			for (x = 0; x < 16; x++)
+				if (x < 3 || x >= 12 || y < 2 || y >= 7)
+					CHECK_EQ(grey[y * 16 + x], src[y * 16 + x]);
+	}
+}
+
+TEST(quantize_ordered_y1_is_the_same_for_any_rectangle)
+{
+	static u8 src[24 * 40], whole[24 * 40], part[24 * 40];
+	static int err[3 * 40 + 12];
+	u32 x, y;
+
+	randomize(src, sizeof(src), 13);
+	memcpy(whole, src, sizeof(src));
+	CHECK(epd_quantize_update(whole, 40, 0, 0, 40, 24, 0x2000 | EPD_CONV_Y1_ORDERED, err));
+	memcpy(part, src, sizeof(src));
+	CHECK(epd_quantize_update(part, 40, 5, 3, 21, 4, 0x2000 | EPD_CONV_Y1_ORDERED, err));
+	CHECK(epd_quantize_update(part, 40, 17, 9, 23, 11, 0x2000 | EPD_CONV_Y1_ORDERED, err));
+	for (y = 0; y < 24; y++)
+		for (x = 0; x < 40; x++) {
+			bool in = (x >= 5 && x < 26 && y >= 3 && y < 7) || (x >= 17 && y >= 9 && y < 20);
+
+			CHECK_EQ(part[y * 40 + x], in ? whole[y * 40 + x] : src[y * 40 + x]);
+		}
 }
 
 TEST(convert_grey8_matches_rgba_of_the_same_grey)
 {
-	static const u32 flags[] = { 0, 0x1000, 0x2000, 0x2000 | EPD_CONV_Y1_ORDERED, 0x4000, 0x0800, 0x0008 };
 	static u8 src[10 * 16], rgba[10 * 16 * 4], a[10 * 16], b[10 * 16], lut[256];
-	static int err[3 * 16 + 12], err2[3 * 16 + 12];
-	size_t i, f;
+	size_t i;
 	int g;
 
 	randomize(src, sizeof(src), 11);
@@ -404,16 +431,13 @@ TEST(convert_grey8_matches_rgba_of_the_same_grey)
 		memset(rgba + 4 * i, src[i], 4);
 	for (i = 0; i < 256; i++)
 		lut[i] = (u8)(255 - i);
-	for (g = 0; g < 2; g++)
-		for (f = 0; f < ARRAY_LEN(flags); f++) {
-			memset(a, 0x5a, sizeof(a));
-			memset(b, 0x5a, sizeof(b));
-			memset(err, 0, sizeof(err));
-			memset(err2, 0, sizeof(err2));
-			epd_convert_update(rgba, 16 * 4, a, 16, 3, 2, 9, 5, flags[f], true, false, g ? lut : NULL, err);
-			epd_convert_grey8(src, 16, b, 16, 3, 2, 9, 5, flags[f], g ? lut : NULL, err2);
-			CHECK_MEM(b, a, sizeof(a));
-		}
+	for (g = 0; g < 2; g++) {
+		memset(a, 0x5a, sizeof(a));
+		memset(b, 0x5a, sizeof(b));
+		epd_convert_update(rgba, 16 * 4, a, 16, 3, 2, 9, 5, true, false, g ? lut : NULL);
+		epd_convert_grey8(src, 16, b, 16, 3, 2, 9, 5, g ? lut : NULL);
+		CHECK_MEM(b, a, sizeof(a));
+	}
 }
 
 #ifdef EPD_NEON
@@ -502,14 +526,13 @@ TEST(neon_row_matches_scalar)
 
 TEST(convert_update_inverts_through_the_table)
 {
-	static const u8 in[4] = { 0xff, 0x00, 0x80, 0x0f }, want[4] = { 0x00, 0xf0, 0x70, 0xf0 };
+	static const u8 in[4] = { 0xff, 0x00, 0x80, 0x0f }, want[4] = { 0x00, 0xff, 0x7f, 0xf0 };
 	static u8 rgba[4 * 4], grey[4], lut[256];
-	static int err[3 * 4 + 12];
 	size_t i;
 
 	for (i = 0; i < 4; i++)
 		memset(rgba + 4 * i, in[i], 3);
 	CHECK(epd_lut_build(lut, NULL, true));
-	epd_convert_update(rgba, 4 * 4, grey, 4, 0, 0, 4, 1, 0, false, false, lut, err);
+	epd_convert_update(rgba, 4 * 4, grey, 4, 0, 0, 4, 1, false, false, lut);
 	CHECK_MEM(grey, want, sizeof(grey));
 }

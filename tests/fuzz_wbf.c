@@ -78,7 +78,8 @@ static void check_engine(const u8 *wbf, size_t size, const u8 *ops, size_t nops)
 		struct epd_update u = {
 			.left = ops[i] % 16, .top = ops[i] / 16 % 4,
 			.width = (u16)(1 + ops[i + 1] % 16), .height = (u16)(1 + ops[i + 1] / 16 % 4),
-			.mode = ops[i + 2] % 18, .full = ops[i + 2] >> 7, .marker = (u32)i,
+			.mode = ops[i + 2] % 18, .full = ops[i + 2] >> 7, .repeat = ops[i + 1] >> 7,
+			.marker = (u32)i,
 		};
 
 		memset(grey, ops[i + 3], sizeof(grey));

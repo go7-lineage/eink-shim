@@ -84,3 +84,15 @@ int epd_mode14_frames(u8 *f, size_t cap)
 			memset(f + n * 1024, seq[i].drive, 1024);
 	return n;
 }
+
+u8 epd_a2_level(u8 target, u8 old)
+{
+	static const u8 white[16] = { 12, 12, 13, 14, [12] = 13, [13] = 14 };
+	static const u8 black[16] = { [2] = 1, [3] = 2, [12] = 1, [13] = 2, [14] = 3, [15] = 3 };
+
+	if (target == 15 && white[old & 15])
+		return white[old & 15];
+	if (target == 0 && black[old & 15])
+		return black[old & 15];
+	return target;
+}
