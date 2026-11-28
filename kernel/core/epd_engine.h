@@ -33,6 +33,7 @@ void epd_engine_destroy(struct epd_engine *e);
 int epd_engine_set_temp_mc(struct epd_engine *e, int temp_mc);
 void epd_engine_temp_range(const struct epd_engine *e, int *lo, int *hi);
 int epd_engine_set_cut(struct epd_engine *e, int cut);
+void epd_engine_set_aa_all(struct epd_engine *e, bool all);
 int epd_engine_get_cut(const struct epd_engine *e);
 int epd_engine_submit(struct epd_engine *e, const struct epd_update *u, const u8 *grey8, size_t stride);
 bool epd_engine_busy(const struct epd_engine *e);

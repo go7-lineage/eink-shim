@@ -65,7 +65,7 @@ static enum epd_ui_step step(struct ui_rig *r, u64 now, u64 *wait)
 {
 	memset(r->req, 0xee, sizeof(r->req));
 	r->n = -1;
-	return epd_ui_step(&r->ui, now, r->req, &r->n, wait);
+	return epd_ui_step(&r->ui, &r->cfg, now, r->req, &r->n, wait);
 }
 
 static int gc_pass(struct ui_rig *r, u64 last_frame)
@@ -533,6 +533,67 @@ TEST(ui_mode_change_serves_a_pending_gc_interval_gc16)
 	epd_ui_release(&r.ui);
 }
 
+TEST(ui_settle_pass_and_frames_ask_for_no_cleaning_update)
+{
+	struct ui_rig r;
+	u64 wait = 0;
+
+	ui_rig_init(&r, EPD_UI_REGAL);
+	CHECK_EQ(frame(&r, 0), 1);
+	poke(&r, 9, 1);
+	CHECK_EQ(frame(&r, 1000), 1);
+	EXPECT_REQ(&r, 8, 1, 8, 1, 5, 0x1000, 0);
+	CHECK_EQ(r.req[0].no_clean, true);
+	poke(&r, 9, 1);
+	CHECK_EQ(frame(&r, 1050), 1);
+	CHECK_EQ(r.req[0].mode, 4);
+	CHECK_EQ(r.req[0].once, true);
+	CHECK_EQ(step(&r, 1200, &wait), EPD_UI_SEND);
+	EXPECT_REQ(&r, 8, 1, 8, 1, 5, 0x1000, 0);
+	CHECK_EQ(r.req[0].no_clean, true);
+	CHECK_EQ(r.req[0].once, false);
+	epd_ui_release(&r.ui);
+}
+
+TEST(ui_settle_pass_is_full_when_configured)
+{
+	struct ui_rig r;
+	u64 wait = 0;
+
+	ui_rig_init(&r, EPD_UI_NORMAL);
+	r.cfg.settle_full = true;
+	CHECK_EQ(frame(&r, 0), 1);
+	poke(&r, 9, 1);
+	CHECK_EQ(frame(&r, 1000), 1);
+	EXPECT_REQ(&r, 8, 1, 8, 1, 255, 0, 0);
+	CHECK_EQ(r.req[0].no_clean, false);
+	poke(&r, 9, 1);
+	CHECK_EQ(frame(&r, 1050), 1);
+	CHECK_EQ(step(&r, 1200, &wait), EPD_UI_SEND);
+	EXPECT_REQ(&r, 8, 1, 8, 1, 255, 0, 1);
+	CHECK_EQ(r.req[0].no_clean, false);
+	epd_ui_release(&r.ui);
+}
+
+TEST(ui_gc16_passes_stay_full)
+{
+	struct ui_rig r;
+	u64 wait = 0;
+
+	ui_rig_init(&r, EPD_UI_SPEED);
+	r.cfg.big_pct = 50;
+	CHECK_EQ(frame(&r, 0), 1);
+	EXPECT_REQ(&r, 0, 0, W, H, 2, 0x1000, 1);
+	poke_rows(&r, 0, H);
+	CHECK_EQ(frame(&r, 1000), 1);
+	CHECK_EQ(gc_pass(&r, 1000), 1);
+	EXPECT_REQ(&r, 0, 0, W, H, 2, 0x1000, 1);
+	CHECK_EQ(epd_ui_flash(&r.ui, 5000), 0);
+	CHECK_EQ(step(&r, 5000, &wait), EPD_UI_SEND);
+	EXPECT_REQ(&r, 0, 0, W, H, 2, 0x1000, 1);
+	epd_ui_release(&r.ui);
+}
+
 TEST(ui_debounced_mode_settles_after_a_burst)
 {
 	struct ui_rig r;
@@ -551,7 +612,7 @@ TEST(ui_debounced_mode_settles_after_a_burst)
 	CHECK_EQ(step(&r, 248, &wait), EPD_UI_WAIT);
 	CHECK_EQ(wait, 1);
 	CHECK_EQ(step(&r, 249, &wait), EPD_UI_SEND);
-	EXPECT_REQ(&r, 8, 1, 8, 1, 255, 0, 1);
+	EXPECT_REQ(&r, 8, 1, 8, 1, 255, 0, 0);
 	CHECK_EQ(r.req[0].marker, 3);
 	CHECK_EQ(step(&r, 250, &wait), EPD_UI_IDLE);
 	poke(&r, 9, 1);
@@ -670,7 +731,7 @@ TEST(ui_regal_modes_are_debounced)
 			CHECK_EQ(step(&r, 5000, &wait), EPD_UI_IDLE);
 		} else {
 			CHECK_EQ(step(&r, 5000, &wait), EPD_UI_SEND);
-			EXPECT_REQ(&r, 0, 0, 8, 1, m[i].wf, m[i].flag, 1);
+			EXPECT_REQ(&r, 0, 0, 8, 1, m[i].wf, m[i].flag, 0);
 		}
 		epd_ui_release(&r.ui);
 	}
@@ -838,7 +899,7 @@ TEST(ui_settle_covers_only_the_transient_rows)
 	CHECK_EQ(frame(&r, 1050), 1);
 	EXPECT_REQ(&r, 8, 3, 8, 1, 4, 0x2000, 0);
 	CHECK_EQ(step(&r, 1200, &wait), EPD_UI_SEND);
-	EXPECT_REQ(&r, 8, 3, 8, 1, 255, 0, 1);
+	EXPECT_REQ(&r, 8, 3, 8, 1, 255, 0, 0);
 	CHECK_EQ(step(&r, 1300, &wait), EPD_UI_IDLE);
 	CHECK_EQ(r.n, 0);
 	epd_ui_release(&r.ui);
@@ -891,7 +952,7 @@ TEST(ui_debounced_modes_have_no_big_burst_pass)
 		CHECK_EQ(frame(&r, 6050), 1);
 		CHECK_EQ(r.req[0].mode, 4);
 		CHECK_EQ(step(&r, 6200, &wait), EPD_UI_SEND);
-		CHECK_EQ(r.req[0].update_mode, 1);
+		CHECK_EQ(r.req[0].update_mode, 0);
 		CHECK(r.req[0].mode != 2);
 		CHECK_EQ(step(&r, 9000, &wait), EPD_UI_IDLE);
 		epd_ui_release(&r.ui);
@@ -910,14 +971,14 @@ TEST(ui_unreadable_frame_makes_the_next_pass_full_screen)
 	r.n = epd_ui_frame(&r.ui, &r.cfg, r.fb, W * 4 - 1, LEN, 1050, r.req, &r.cut);
 	EXPECT_REQ(&r, 0, 0, W, H, 4, 0x2000, 0);
 	CHECK_EQ(step(&r, 1200, &wait), EPD_UI_SEND);
-	EXPECT_REQ(&r, 0, 0, W, H, 255, 0, 1);
+	EXPECT_REQ(&r, 0, 0, W, H, 255, 0, 0);
 
 	poke(&r, 0, 0);
 	CHECK_EQ(frame(&r, 2000), 1);
 	poke(&r, 9, 5);
 	CHECK_EQ(frame(&r, 2050), 1);
 	CHECK_EQ(step(&r, 2200, &wait), EPD_UI_SEND);
-	EXPECT_REQ(&r, 8, 5, 8, 1, 255, 0, 1);
+	EXPECT_REQ(&r, 8, 5, 8, 1, 255, 0, 0);
 	epd_ui_release(&r.ui);
 }
 
@@ -942,7 +1003,7 @@ TEST(ui_gc16_frame_clears_the_transient_rows)
 	poke(&r, 17, 5);
 	CHECK_EQ(frame(&r, 2050), 1);
 	CHECK_EQ(step(&r, 2200, &wait), EPD_UI_SEND);
-	EXPECT_REQ(&r, 16, 5, 8, 1, 5, 0x1000, 1);
+	EXPECT_REQ(&r, 16, 5, 8, 1, 5, 0x1000, 0);
 	epd_ui_release(&r.ui);
 }
 

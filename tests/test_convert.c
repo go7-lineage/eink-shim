@@ -318,6 +318,38 @@ TEST(convert_regal_aa_marks_white_next_to_dark)
 	}
 }
 
+TEST(convert_regal_aa_mark_knows_pixels_that_are_neither)
+{
+	static const struct size aa_sizes[] = { { 2, 2 }, { 7, 3 }, { 16, 4 }, { 33, 6 } };
+	static u8 lv[6 * 40], got[6 * 33], want[6 * 33];
+	unsigned int seed = 31;
+	size_t i, k;
+
+	for (i = 0; i < ARRAY_LEN(aa_sizes); i++) {
+		u32 w = aa_sizes[i].w, h = aa_sizes[i].h;
+
+		for (k = 0; k < sizeof(lv); k++)
+			lv[k] = test_rand(&seed) % 3 ? 15 : test_rand(&seed) % 2 ? 0 : 16;
+		epd_regal_aa_mark(lv, 40, w, h, got, 0);
+		aa_reference(lv, 40, w, h, want, 0);
+		CHECK_MEM(got, want, (size_t)w * h);
+#ifdef EPD_NEON
+		memset(got, 0xee, sizeof(got));
+		epd_regal_aa_mark_neon(lv, 40, w, h, got, 0);
+		CHECK_MEM(got, want, (size_t)w * h);
+#endif
+	}
+	lv[0] = 16;
+	lv[1] = 15;
+	lv[40] = 16;
+	lv[41] = 16;
+	epd_regal_aa_mark(lv, 40, 2, 2, got, 0);
+	CHECK_EQ(got[1], 0);
+	lv[41] = 0;
+	epd_regal_aa_mark(lv, 40, 2, 2, got, 0);
+	CHECK_EQ(got[1], 1);
+}
+
 TEST(convert_update_stays_inside_the_rectangle)
 {
 	static u8 rgba[10 * 16 * 4], grey[10 * 16];

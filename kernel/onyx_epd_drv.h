@@ -141,6 +141,7 @@ static inline bool epd_output_ready(struct onyx_epd *p)
 }
 
 extern bool epd_param_ui;
+extern bool epd_param_settle_full;
 extern bool epd_param_swap_rg;
 extern const struct drm_driver epd_drm_driver;
 extern const struct file_operations ebc_fops;

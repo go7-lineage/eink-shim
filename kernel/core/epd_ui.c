@@ -363,6 +363,7 @@ static int ui_marker(struct epd_ui *u)
 static void ui_upd(struct epd_request *r, u32 x, u32 y, u32 w, u32 h, int wf, u32 flag, bool full, int marker)
 {
 	r->once = false;
+	r->no_clean = false;
 	r->top = (u16)y;
 	r->left = (u16)x;
 	r->width = (u16)w;
@@ -484,6 +485,7 @@ int epd_ui_frame(struct epd_ui *u, const struct epd_ui_cfg *cfg, const u8 *rgba,
 		u->dirty_all = true;
 		ui_upd(out, 0, 0, u->w, u->h, m->wf, m->flag, false, marker);
 		out->once = d.kind == UI_TRANSIENT;
+		out->no_clean = !cfg->settle_full;
 		return 1;
 	}
 	ui_spans_merge(u->h, u->dirty, u->rows);
@@ -491,16 +493,19 @@ int epd_ui_frame(struct epd_ui *u, const struct epd_ui_cfg *cfg, const u8 *rgba,
 	if (d.kind == UI_TRANSIENT)
 		ui_spans_merge(u->h, u->transient, u->rows);
 	n = ui_send(u, u->rows, NULL, m->wf, m->flag, false, marker, out);
-	for (i = 0; i < n; i++)
+	for (i = 0; i < n; i++) {
 		out[i].once = d.kind == UI_TRANSIENT;
+		out[i].no_clean = !cfg->settle_full;
+	}
 	return n;
 }
 
-enum epd_ui_step epd_ui_step(struct epd_ui *u, u64 now, struct epd_request *out, int *n, u64 *wait)
+enum epd_ui_step epd_ui_step(struct epd_ui *u, const struct epd_ui_cfg *cfg, u64 now, struct epd_request *out, int *n,
+			     u64 *wait)
 {
 	const struct epd_ui_span *a, *b;
-	bool flash = u->flash_pending, gc16 = true, all;
-	int wf;
+	bool flash = u->flash_pending, gc16 = true, full = true, all;
+	int wf, i;
 	u32 flag;
 	u64 quiet;
 
@@ -519,6 +524,7 @@ enum epd_ui_step epd_ui_step(struct epd_ui *u, u64 now, struct epd_request *out,
 		b = u->transient;
 	} else if (u->settle_mode >= 0) {
 		gc16 = false;
+		full = cfg->settle_full;
 		wf = ui_mode(u->settle_mode)->wf;
 		flag = ui_mode(u->settle_mode)->flag;
 		quiet = UI_SETTLE_MS;
@@ -541,15 +547,17 @@ enum epd_ui_step epd_ui_step(struct epd_ui *u, u64 now, struct epd_request *out,
 	u->big_pending = false;
 	u->gc_pending &= !gc16;
 	if (all) {
-		ui_upd(out, 0, 0, u->w, u->h, wf, flag, true, ui_marker(u));
+		ui_upd(out, 0, 0, u->w, u->h, wf, flag, full, ui_marker(u));
 		*n = 1;
 		if (gc16)
 			ui_dirty_reset(u);
 	} else {
-		*n = ui_send(u, a, b, wf, flag, true, ui_marker(u), out);
+		*n = ui_send(u, a, b, wf, flag, full, ui_marker(u), out);
 		if (gc16)
 			ui_dirty_clean(u, out, *n);
 	}
+	for (i = 0; i < *n; i++)
+		out[i].no_clean = !full;
 	ui_transient_reset(u);
 	return EPD_UI_SEND;
 }

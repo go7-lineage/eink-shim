@@ -217,6 +217,7 @@ composer_cycle() {
 	log "composer cycle, image $1: $(grep '^sleep' $S/status)"
 }
 composer_cycle loaded
+echo 0 > /sys/module/onyx_epd/parameters/settle_full || fail "settle_full 0"
 shutdown_cycle() {
 	echo x > $S/shutdown 2>/dev/null && fail "shutdown x accepted"
 	echo 1 > $S/shutdown || fail "shutdown 1"
@@ -295,6 +296,15 @@ pattern white 4
 pattern black 4
 echo 1 > /sys/module/onyx_epd/parameters/a2_repeat || fail "a2_repeat 1"
 pattern white 4
+for q in aa_all settle_full; do
+	[ "$(cat /sys/module/onyx_epd/parameters/$q)" = N ] || fail "$q default: $(cat /sys/module/onyx_epd/parameters/$q)"
+	echo 1 > /sys/module/onyx_epd/parameters/$q || fail "$q 1"
+done
+pattern checker 5
+pattern stripes 5
+echo 0 > /sys/module/onyx_epd/parameters/aa_all || fail "aa_all 0"
+pattern diagonal 5
+pattern white 5
 log "pacing and repeat: $(fake)"
 grep -q "^pmic night: unavailable$" $S/status || fail "pmic line: $(tail -1 $S/status)"
 [ "$(cat /sys/module/onyx_epd/parameters/night_pmic)" = N ] || fail "night_pmic default: $(cat /sys/module/onyx_epd/parameters/night_pmic)"

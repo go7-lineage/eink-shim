@@ -51,8 +51,8 @@ void epd_policy_apply(struct epd_policy *p, const struct epd_request *in, struct
 
 	if (mode == M_A2 || (in->flags & 0x8000))
 		full = true;
-	if ((last == M_A2 && mode != M_A2) || (is_regal(last) && !is_regal(mode)) ||
-	    (last == M_DU && mode != M_DU))
+	if (!in->no_clean && ((last == M_A2 && mode != M_A2) || (is_regal(last) && !is_regal(mode)) ||
+			      (last == M_DU && mode != M_DU)))
 		full = true;
 	if (p->du_a2_clean && mode == M_A2 && last != M_A2 && last != -1) {
 		mode = M_DU;
@@ -194,7 +194,7 @@ void epd_queue_push(struct epd_queue *q, const struct epd_decision *d)
 	struct queue_rect a, b, box;
 	int i;
 
-	if (q->merge && in.upd.full && !queue_fast(&in))
+	if (q->merge && !queue_fast(&in))
 		in.barrier |= queue_drop_covered(q, &in);
 	for (i = q->n - 1; q->merge && !in.barrier && i >= 0; i--) {
 		t = queue_at(q, i);

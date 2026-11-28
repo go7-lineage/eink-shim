@@ -49,6 +49,7 @@ struct epd_engine {
 	u8 *state;
 	u8 *owner;
 	u8 *mark;		/* Regal AA scratch */
+	bool aa_all;
 	struct epd_lut lut[EPD_NLUTS];
 	u32 seq, req_seq;
 	int active;
@@ -348,21 +349,44 @@ static void activate_update(struct epd_engine *e, const struct claim *c, struct 
 	l->repeat = repeat && table->staged;
 }
 
-static void regal_aa_mark(struct epd_engine *e, const struct epd_update *u)
-{
-	const u8 *lv = e->state + (size_t)u->top * e->w + u->left;
+#define MASK_TODO	1
+#define MASK_EDGE	2
+#define AA_DARK		0
+#define AA_WHITE	15
+#define AA_OTHER	16
 
+static void regal_aa_mark(struct epd_engine *e, struct epd_req *r)
+{
+	const struct epd_update *u = &r->upd;
+	size_t n = (size_t)u->width * u->height, i;
+	u32 x, y;
+
+	for (y = 0; y < u->height; y++) {
+		const u8 *state = e->state + (size_t)(u->top + y) * e->w + u->left;
+		const u8 *target = r->target + (size_t)y * u->width;
+		u8 *kind = e->mark + (size_t)y * u->width;
+
+		for (x = 0; x < u->width; x++) {
+			u8 level = state[x] >> 4;
+
+			kind[x] = level == 15 ? AA_WHITE : e->aa_all || target[x] != level ? AA_DARK : AA_OTHER;
+		}
+	}
 #ifdef EPD_NEON
 	if (u->width >= 2 && u->height >= 2) {
 		EPD_SIMD_STATE;
 
 		epd_simd_begin();
-		epd_regal_aa_mark_neon(lv, e->w, u->width, u->height, e->mark, 4);
+		epd_regal_aa_mark_neon(e->mark, u->width, u->width, u->height, r->mask, 0);
 		epd_simd_end();
-		return;
+	} else {
+		epd_regal_aa_mark(e->mark, u->width, u->width, u->height, r->mask, 0);
 	}
+#else
+	epd_regal_aa_mark(e->mark, u->width, u->width, u->height, r->mask, 0);
 #endif
-	epd_regal_aa_mark(lv, e->w, u->width, u->height, e->mark, 4);
+	for (i = 0; i < n; i++)
+		r->mask[i] = (u8)(MASK_TODO | (r->mask[i] ? MASK_EDGE : 0));
 }
 
 static int merge(struct epd_engine *e, struct epd_req *r)
@@ -384,8 +408,6 @@ static int merge(struct epd_engine *e, struct epd_req *r)
 	}
 	if (u->mode == EPD_MODE_A2 && get_table(e, EPD_MODE_DU, true, false, &fallback))
 		fallback = NULL;
-	if (aa)
-		regal_aa_mark(e, u);
 	c.lut = free_lut(e, -1);
 	r->wait[0] = 0;
 	r->wait[1] = 0;
@@ -397,7 +419,7 @@ static int merge(struct epd_engine *e, struct epd_req *r)
 
 		for (x = r->x0; x < r->x1; x++) {
 			size_t p = row + x;
-			bool edge = aa && e->mark[rrow + x];
+			bool edge = aa && (r->mask[rrow + x] & MASK_EDGE);
 			struct epd_table *tab = edge ? aat : table;
 			struct claim *cl = edge ? &ca : &c;
 			u8 o, tgt, cur, idx;
@@ -526,7 +548,10 @@ int epd_engine_submit(struct epd_engine *e, const struct epd_update *u, const u8
 		for (x = 0; x < u->width; x++)
 			r->target[(size_t)y * u->width + x] = table->target[src[x] >> 4];
 	}
-	memset(r->mask, 1, n);
+	if (e->cfg.regal_aa && epd_mode_has_aa(u->mode))
+		regal_aa_mark(e, r);
+	else
+		memset(r->mask, MASK_TODO, n);
 	r->y1 = u->height;
 	r->x1 = u->width;
 	r->seq = e->req_seq++;
@@ -801,6 +826,11 @@ int epd_engine_set_cut(struct epd_engine *e, int cut)
 				for (v = 0; v < CACHE_VARIANTS; v++)
 					cache_retire(&e->cache[(t * e->wf.n_modes + slots[k]) * CACHE_VARIANTS + v]);
 	return 0;
+}
+
+void epd_engine_set_aa_all(struct epd_engine *e, bool all)
+{
+	e->aa_all = all;
 }
 
 int epd_engine_get_cut(const struct epd_engine *e)

@@ -563,13 +563,55 @@ static void regal_scene(struct rig *r, bool aa)
 	r->ndone = 0;
 }
 
-TEST(engine_regal_redrives_white_next_to_dark)
+TEST(engine_regal_pulses_white_next_to_a_changing_dark_pixel)
 {
 	struct rig r;
 	u32 x, y;
 	int f, n = (int)fixture_frames(4, 0);
 
 	regal_scene(&r, true);
+	r.grey[2 * W + 23] = 0xf0;
+	r.grey[3 * W + 23] = 0xf0;
+	CHECK_EQ(submit(&r, 0, 0, W, H, REGAL, false, 1), 0);
+	for (f = 0; f < n; f++) {
+		CHECK_EQ(epd_engine_tick(r.e, r.frame), 1);
+		for (y = 0; y < H; y++)
+			for (x = 0; x < W; x++) {
+				u8 want = 0;
+
+				if (x == 23 && (y == 2 || y == 3))
+					want = fixture_drive(4, 0, (unsigned int)f, 30, 0);
+				else if (x == 24 && y >= 1 && y <= 4)
+					want = fixture_drive(4, 0, (unsigned int)f, 31, 31);
+				CHECK_EQ(drive_at(&r, x, y), want);
+			}
+	}
+	CHECK(!epd_engine_busy(r.e));
+	CHECK_EQ(r.ndone, 1);
+	rig_free(&r);
+}
+
+TEST(engine_regal_leaves_edges_of_unchanged_pixels_alone)
+{
+	struct rig r;
+
+	regal_scene(&r, true);
+	CHECK_EQ(submit(&r, 0, 0, W, H, REGAL, false, 1), 0);
+	CHECK(!epd_engine_busy(r.e));
+	CHECK_EQ(submit(&r, 0, 0, W, H, REGAL, true, 2), 0);
+	CHECK(!epd_engine_busy(r.e));
+	CHECK_EQ(r.ndone, 2);
+	rig_free(&r);
+}
+
+TEST(engine_regal_can_pulse_every_old_edge_like_stock)
+{
+	struct rig r;
+	u32 x, y;
+	int f, n = (int)fixture_frames(4, 0);
+
+	regal_scene(&r, true);
+	epd_engine_set_aa_all(r.e, true);
 	CHECK_EQ(submit(&r, 0, 0, W, H, REGAL, false, 1), 0);
 	for (f = 0; f < n; f++) {
 		CHECK_EQ(epd_engine_tick(r.e, r.frame), 1);
@@ -580,12 +622,43 @@ TEST(engine_regal_redrives_white_next_to_dark)
 	}
 	CHECK(!epd_engine_busy(r.e));
 	CHECK_EQ(r.ndone, 1);
+	epd_engine_set_aa_all(r.e, false);
+	CHECK_EQ(submit(&r, 0, 0, W, H, REGAL, false, 2), 0);
+	CHECK(!epd_engine_busy(r.e));
 	rig_free(&r);
 
 	regal_scene(&r, false);
+	epd_engine_set_aa_all(r.e, true);
 	CHECK_EQ(submit(&r, 0, 0, W, H, REGAL, false, 1), 0);
 	CHECK(!epd_engine_busy(r.e));
 	CHECK_EQ(r.ndone, 1);
+	rig_free(&r);
+}
+
+TEST(engine_regal_edge_waits_with_its_pixel)
+{
+	struct rig r;
+	u32 y;
+	int f, ng = (int)fixture_frames(2, 0), n = (int)fixture_frames(4, 0);
+
+	regal_scene(&r, true);
+	CHECK_EQ(submit(&r, 24, 0, 8, H, GC16, true, 1), 0);
+	for (y = 0; y < H; y++)
+		r.grey[y * W + 23] = 0xf0;
+	CHECK_EQ(submit(&r, 0, 0, W, H, REGAL, false, 2), 0);
+	for (f = 0; f < ng; f++) {
+		CHECK_EQ(epd_engine_tick(r.e, r.frame), 1);
+		CHECK_EQ(drive_at(&r, 24, 2), fixture_drive(2, 0, (unsigned int)f, 30, 30));
+		CHECK_EQ(drive_at(&r, 23, 2), f < n ? fixture_drive(4, 0, (unsigned int)f, 30, 0) : 0);
+	}
+	for (f = 0; f < n; f++) {
+		CHECK_EQ(epd_engine_tick(r.e, r.frame), 1);
+		CHECK_EQ(drive_at(&r, 24, 2), fixture_drive(4, 0, (unsigned int)f, 31, 31));
+		CHECK_EQ(drive_at(&r, 25, 2), 0);
+		CHECK_EQ(drive_at(&r, 23, 2), 0);
+	}
+	CHECK(!epd_engine_busy(r.e));
+	CHECK_EQ(r.ndone, 2);
 	rig_free(&r);
 }
 

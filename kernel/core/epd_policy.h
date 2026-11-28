@@ -11,6 +11,7 @@ struct epd_request {
 	u32 marker;
 	u32 flags;
 	bool once;
+	bool no_clean;
 };
 
 struct epd_decision {

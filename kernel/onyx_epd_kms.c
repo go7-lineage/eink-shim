@@ -28,6 +28,10 @@ bool epd_param_ui = true;
 module_param_named(ui, epd_param_ui, bool, 0644);
 MODULE_PARM_DESC(ui, "refresh policy for commits without EPD_UPDATES");
 
+bool epd_param_settle_full;
+module_param_named(settle_full, epd_param_settle_full, bool, 0644);
+MODULE_PARM_DESC(settle_full, "redraw after fast frames as a full update, with a flash, instead of a partial one");
+
 struct onyx_plane_state {
 	struct drm_shadow_plane_state base;
 	struct drm_property_blob *updates;
@@ -190,7 +194,10 @@ static void epd_plane_atomic_update(struct drm_plane *plane, struct drm_atomic_s
 		int cut;
 
 		u64 t0 = ktime_get_ns();
-		int n = fb->format->cpp[0] != 4 ? 0 :
+		int n;
+
+		p->ui_cfg.settle_full = READ_ONCE(epd_param_settle_full);
+		n = fb->format->cpp[0] != 4 ? 0 :
 			epd_ui_frame(&p->ui, &p->ui_cfg, vaddr, fb->pitches[0],
 				     fb->obj[0]->size - fb->offsets[0], epd_now_ms(), r, &cut);
 

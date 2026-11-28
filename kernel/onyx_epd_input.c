@@ -26,6 +26,10 @@ static bool a2_repeat = true;
 module_param(a2_repeat, bool, 0644);
 MODULE_PARM_DESC(a2_repeat, "finish A2 updates with stock's three further passes");
 
+static bool aa_all;
+module_param(aa_all, bool, 0644);
+MODULE_PARM_DESC(aa_all, "Regal: pulse every white pixel next to a dark one, as stock, not only next to changing ones");
+
 static bool fast_read = true;
 module_param(fast_read, bool, 0644);
 MODULE_PARM_DESC(fast_read, "read imported frames through a cached mapping");
@@ -40,6 +44,7 @@ static bool epd_upd_to_req(const struct onyx_epdc_upd *u, struct epd_request *r)
 	r->marker = u->update_marker;
 	r->flags = u->flag;
 	r->once = false;
+	r->no_clean = false;
 	return true;
 }
 
@@ -151,6 +156,7 @@ void epd_start(struct onyx_epd *p)
 	struct epd_decision d;
 	int ret;
 
+	epd_engine_set_aa_all(p->eng, READ_ONCE(aa_all));
 	while (epd_plane_pop(&p->pl, p->eng, conv, &d, &ret))
 		if (ret)
 			drm_dbg(&p->drm, "update mode %d dropped: %d\n", d.upd.mode, ret);
@@ -278,7 +284,8 @@ void epd_ui_work(struct work_struct *work)
 	int n;
 
 	mutex_lock(&p->in_lock);
-	st = epd_ui_step(&p->ui, epd_now_ms(), r, &n, &wait);
+	p->ui_cfg.settle_full = READ_ONCE(epd_param_settle_full);
+	st = epd_ui_step(&p->ui, &p->ui_cfg, epd_now_ms(), r, &n, &wait);
 	mutex_unlock(&p->in_lock);
 	if (st == EPD_UI_WAIT) {
 		mod_delayed_work(system_unbound_wq, &p->ui_work, msecs_to_jiffies(wait));

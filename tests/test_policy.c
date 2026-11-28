@@ -141,6 +141,38 @@ TEST(policy_a2_repeats_unless_asked_once)
 	CHECK_EQ(apply(&p, A2, 0, 0).upd.repeat, true);
 }
 
+TEST(policy_no_clean_keeps_the_update_as_asked_after_a_fast_one)
+{
+	static const int fast[] = { A2, DU, REGAL };
+	struct epd_request r = { .width = 8, .height = 8, .mode = GC16, .no_clean = true };
+	struct epd_decision d;
+	struct epd_policy p;
+	size_t i;
+
+	for (i = 0; i < ARRAY_LEN(fast); i++) {
+		epd_policy_init(&p, true);
+		apply(&p, fast[i], 0, 0);
+		epd_policy_apply(&p, &r, &d);
+		CHECK_EQ(d.upd.full, false);
+		CHECK_EQ(d.barrier, fast[i] != REGAL);
+
+		epd_policy_init(&p, true);
+		apply(&p, fast[i], 0, 0);
+		r.update_mode = 1;
+		epd_policy_apply(&p, &r, &d);
+		CHECK_EQ(d.upd.full, true);
+		r.update_mode = 0;
+
+		epd_policy_init(&p, true);
+		apply(&p, fast[i], 0, 0);
+		EXPECT(apply(&p, GC16, 0, 0), GC16, true, fast[i] != REGAL);
+	}
+	epd_policy_init(&p, true);
+	r.mode = A2;
+	epd_policy_apply(&p, &r, &d);
+	CHECK_EQ(d.upd.full, true);
+}
+
 static void apply_group(struct epd_policy *p, int mode, int update_mode, struct epd_decision *d)
 {
 	struct epd_request r[3];
@@ -361,7 +393,7 @@ TEST(queue_only_joins_the_same_kind)
 	CHECK_EQ(q.coalesced, 0);
 }
 
-TEST(queue_full_update_replaces_queued_fast_updates_it_covers)
+TEST(queue_grey_update_replaces_queued_fast_updates_it_covers)
 {
 	struct epd_queue q;
 	struct epd_decision d, out;
@@ -390,7 +422,7 @@ TEST(queue_full_update_replaces_queued_fast_updates_it_covers)
 	CHECK_EQ(out.upd.marker, 5);
 }
 
-TEST(queue_full_update_takes_over_the_barrier_of_the_last_one_it_replaces)
+TEST(queue_grey_update_takes_over_the_barrier_of_the_last_one_it_replaces)
 {
 	struct epd_queue q;
 	struct epd_decision d, out;
@@ -406,6 +438,17 @@ TEST(queue_full_update_takes_over_the_barrier_of_the_last_one_it_replaces)
 	CHECK(!epd_queue_pop(&q, true, &out));
 	CHECK(epd_queue_pop(&q, false, &out));
 	CHECK_EQ(out.upd.marker, 3);
+
+	d = dec(10, 10, 20, 20, A2, true, 4);
+	d.barrier = true;
+	epd_queue_push(&q, &d);
+	d = dec(10, 10, 20, 20, GC16, false, 5);
+	epd_queue_push(&q, &d);
+	CHECK_EQ(q.n, 1);
+	CHECK(!epd_queue_pop(&q, true, &out));
+	CHECK(epd_queue_pop(&q, false, &out));
+	CHECK_EQ(out.upd.marker, 5);
+	CHECK_EQ(out.upd.full, false);
 }
 
 TEST(queue_keeps_queued_updates_a_new_one_does_not_replace)
@@ -417,7 +460,7 @@ TEST(queue_keeps_queued_updates_a_new_one_does_not_replace)
 	q.merge = true;
 	d = dec(10, 10, 20, 20, A2, true, 1);
 	epd_queue_push(&q, &d);
-	d = dec(0, 0, 40, 40, GC16, false, 2);
+	d = dec(11, 0, 40, 40, GC16, false, 2);
 	epd_queue_push(&q, &d);
 	d = dec(0, 0, 40, 40, DU, true, 3);
 	epd_queue_push(&q, &d);
