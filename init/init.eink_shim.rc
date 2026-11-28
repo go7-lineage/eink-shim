@@ -22,6 +22,9 @@ on early-boot
     chown system system /sys/devices/virtual/sepdc/debug/ui_levels
     chown system system /sys/devices/virtual/sepdc/debug/ui_flash
 
+on init && property:ro.bootmode=charger
+    exec_start vendor.eink-drm-card
+
 # The QS tile and Settings write the shim's properties; the driver's UI policy reads them from sysfs.
 # Unparsable values are rejected by sysfs and leave the old setting (the shim fell back to defaults).
 on property:persist.vendor.eink_shim.mode=*

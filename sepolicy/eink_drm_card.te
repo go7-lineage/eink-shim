@@ -9,3 +9,5 @@ allow eink_drm_card vendor_toolbox_exec:file rx_file_perms;
 r_dir_file(eink_drm_card, sysfs)
 r_dir_file(eink_drm_card, sysfs_gpu)
 set_prop(eink_drm_card, vendor_hwc_drm_prop)
+allow eink_drm_card dri_device:dir search;
+allow eink_drm_card graphics_device:chr_file { getattr setattr };
