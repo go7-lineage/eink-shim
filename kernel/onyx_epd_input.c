@@ -30,6 +30,10 @@ static bool aa_all;
 module_param(aa_all, bool, 0644);
 MODULE_PARM_DESC(aa_all, "Regal: pulse every white pixel next to a dark one, as stock, not only next to changing ones");
 
+static bool gu_aa = true;
+module_param(gu_aa, bool, 0644);
+MODULE_PARM_DESC(gu_aa, "GC16 partial: pulse the white 4-neighbours of pixels turning white, as stock 4.3.1");
+
 static bool fast_read = true;
 module_param(fast_read, bool, 0644);
 MODULE_PARM_DESC(fast_read, "read imported frames through a cached mapping");
@@ -157,6 +161,7 @@ void epd_start(struct onyx_epd *p)
 	int ret;
 
 	epd_engine_set_aa_all(p->eng, READ_ONCE(aa_all));
+	epd_engine_set_gu_aa(p->eng, READ_ONCE(gu_aa));
 	while (epd_plane_pop(&p->pl, p->eng, conv, &d, &ret))
 		if (ret)
 			drm_dbg(&p->drm, "update mode %d dropped: %d\n", d.upd.mode, ret);

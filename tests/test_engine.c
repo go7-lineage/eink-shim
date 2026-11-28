@@ -694,6 +694,156 @@ TEST(engine_regal_tables_are_fixed_up)
 	rig_free(&r);
 }
 
+static void halo_init(struct rig *r, bool on)
+{
+	rig_init(r);
+	epd_engine_set_gu_aa(r->e, on);
+	memset(r->grey, 0xf0, sizeof(r->grey));
+}
+
+static void halo_settle(struct rig *r)
+{
+	CHECK_EQ(submit(r, 0, 0, W, H, GC16, true, 9000), 0);
+	run(r);
+	r->ndone = 0;
+}
+
+static bool next_to(u32 x, u32 y, u32 cx, u32 cy)
+{
+	return (x == cx && (y + 1 == cy || y == cy + 1)) || (y == cy && (x + 1 == cx || x == cx + 1));
+}
+
+static void halo_check(struct rig *r, int frames, u32 cx, u32 cy, bool halo)
+{
+	int f, nh = (int)fixture_frames(4, 0);
+	u32 x, y;
+
+	for (f = 0; f < frames; f++) {
+		CHECK_EQ(epd_engine_tick(r->e, r->frame), 1);
+		for (y = 0; y < H; y++)
+			for (x = 0; x < W; x++) {
+				u8 want = 0;
+
+				if (x == cx && y == cy)
+					want = fixture_drive(2, 0, (unsigned int)f, 30, 0);
+				else if (halo && next_to(x, y, cx, cy) && f < nh)
+					want = fixture_drive(4, 0, (unsigned int)f, 31, 31);
+				CHECK_EQ(drive_at(r, x, y), want);
+			}
+	}
+	CHECK(!epd_engine_busy(r->e));
+}
+
+TEST(engine_gc16_halo_pulses_the_white_neighbours_of_a_pixel_turning_white)
+{
+	struct rig r;
+	u32 x, y;
+
+	halo_init(&r, true);
+	r.grey[2 * W + 20] = 0;
+	halo_settle(&r);
+	r.grey[2 * W + 20] = 0xf0;
+	CHECK_EQ(submit(&r, 16, 0, 8, H, GC16, false, 1), 0);
+	halo_check(&r, (int)fixture_frames(2, 0), 20, 2, true);
+	CHECK_EQ(r.ndone, 1);
+	CHECK_EQ(r.done[0], 1);
+	for (y = 0; y < H; y++)
+		for (x = 0; x < W; x++)
+			CHECK_EQ(epd_engine_level(r.e, x, y), 15);
+	CHECK(shows(&r, 15));
+	rig_free(&r);
+}
+
+TEST(engine_gc16_halo_is_off_unless_enabled)
+{
+	struct rig r;
+
+	halo_init(&r, false);
+	r.grey[2 * W + 20] = 0;
+	halo_settle(&r);
+	r.grey[2 * W + 20] = 0xf0;
+	CHECK_EQ(submit(&r, 16, 0, 8, H, GC16, false, 1), 0);
+	halo_check(&r, (int)fixture_frames(2, 0), 20, 2, false);
+	CHECK_EQ(r.ndone, 1);
+	rig_free(&r);
+}
+
+TEST(engine_gc16_halo_reaches_past_the_update_and_stops_at_the_screen_edge)
+{
+	static const u32 at[2][2] = { { 0, 0 }, { W - 1, H - 1 } };
+	struct rig r;
+	int i;
+
+	halo_init(&r, true);
+	r.grey[0] = 0;
+	r.grey[W * H - 1] = 0;
+	halo_settle(&r);
+	for (i = 0; i < 2; i++) {
+		r.grey[at[i][1] * W + at[i][0]] = 0xf0;
+		CHECK_EQ(submit(&r, (u16)at[i][0], (u16)at[i][1], 1, 1, GC16, false, (u32)i + 1), 0);
+		halo_check(&r, (int)fixture_frames(2, 0), at[i][0], at[i][1], true);
+	}
+	CHECK_EQ(r.ndone, 2);
+	rig_free(&r);
+}
+
+TEST(engine_gc16_halo_leaves_busy_and_grey_neighbours_alone)
+{
+	struct rig r;
+	int f, ng = (int)fixture_frames(2, 0), nh = (int)fixture_frames(4, 0), grey;
+	u32 y;
+
+	halo_init(&r, true);
+	r.grey[2 * W + 20] = 0;
+	r.grey[2 * W + 21] = 0x80;
+	halo_settle(&r);
+	grey = epd_engine_level(r.e, 21, 2);
+	CHECK(grey != 15);
+	CHECK_EQ(submit(&r, 19, 0, 1, H, GC16, true, 1), 0);
+	r.grey[2 * W + 20] = 0xf0;
+	CHECK_EQ(submit(&r, 20, 0, 4, H, GC16, false, 2), 0);
+	r.grey[2 * W + 21] = 0;
+	CHECK_EQ(submit(&r, 21, 2, 1, 1, GC16, false, 3), 0);
+	for (f = 0; f < ng; f++) {
+		CHECK_EQ(epd_engine_tick(r.e, r.frame), 1);
+		for (y = 0; y < H; y++)
+			CHECK_EQ(drive_at(&r, 19, y), fixture_drive(2, 0, (unsigned int)f, 30, 30));
+		CHECK_EQ(drive_at(&r, 20, 2), fixture_drive(2, 0, (unsigned int)f, 30, 0));
+		CHECK_EQ(drive_at(&r, 21, 2), fixture_drive(2, 0, (unsigned int)f, 0, 2 * (unsigned int)grey));
+		CHECK_EQ(drive_at(&r, 20, 1), f < nh ? fixture_drive(4, 0, (unsigned int)f, 31, 31) : 0);
+		CHECK_EQ(drive_at(&r, 20, 3), f < nh ? fixture_drive(4, 0, (unsigned int)f, 31, 31) : 0);
+	}
+	CHECK(!epd_engine_busy(r.e));
+	CHECK_EQ(r.ndone, 3);
+	CHECK_EQ(epd_engine_level(r.e, 21, 2), 0);
+	rig_free(&r);
+}
+
+TEST(engine_gc16_halo_only_follows_partial_gc16_pixels_turning_white)
+{
+	struct rig r;
+	u32 x, y, k;
+
+	for (k = 0; k < 3; k++) {
+		halo_init(&r, true);
+		if (k < 2)
+			r.grey[2 * W + 20] = 0;
+		halo_settle(&r);
+		r.grey[2 * W + 20] = k < 2 ? 0xf0 : 0;
+		CHECK_EQ(submit(&r, 20, 2, 1, 1, k == 1 ? DU : GC16, k == 0, 1), 0);
+		CHECK(k == 1 || epd_engine_busy(r.e));
+		while (epd_engine_tick(r.e, r.frame) == 1) {
+			for (y = 0; y < H; y++)
+				for (x = 0; x < W; x++)
+					if (x != 20 || y != 2)
+						CHECK_EQ(drive_at(&r, x, y), 0);
+		}
+		CHECK(!epd_engine_busy(r.e));
+		CHECK_EQ(r.ndone, 1);
+		rig_free(&r);
+	}
+}
+
 TEST(engine_mode_0_uses_slot_0)
 {
 	struct rig r;

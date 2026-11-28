@@ -50,6 +50,8 @@ struct epd_engine {
 	u8 *owner;
 	u8 *mark;		/* Regal AA scratch */
 	bool aa_all;
+	bool gu_aa;
+	struct epd_table **halo;
 	struct epd_lut lut[EPD_NLUTS];
 	u32 seq, req_seq;
 	int active;
@@ -230,6 +232,58 @@ static int get_table(struct epd_engine *e, int mode, bool full, bool aa, struct 
 	return 0;
 }
 
+static int build_halo(struct epd_engine *e, struct epd_table **slotp, u16 n_gc16)
+{
+	int slot = epd_mode_slot(e->wf.mode_version, 5), nfr = 0, n = 0, fix, f, k;
+	struct epd_table *ct;
+	u8 *src = NULL;
+
+	ct = epd_zalloc(sizeof(*ct));
+	if (!ct)
+		return -ENOMEM;
+	if (slot >= 0 && slot < e->wf.n_modes)
+		nfr = epd_wbf_frames(&e->wf, e->t, slot);
+	if (nfr > 0) {
+		src = epd_zalloc((size_t)nfr * 1024);
+		if (!src)
+			goto nomem;
+		n = epd_wbf_decode(&e->wf, e->t, slot, src, (size_t)nfr * 1024);
+		fix = epd_wbf_fixup_variant(&e->wf, slot);
+		if (n > 0 && fix >= 0)
+			epd_regal_fixup(src, n, fix);
+	}
+	k = n < n_gc16 ? n : n_gc16;
+	k = k < 30 ? k : 30;
+	if (k > 0) {
+		ct->t = epd_zalloc((size_t)k * 256);
+		if (!ct->t)
+			goto nomem;
+		for (f = 0; f < k; f++)
+			ct->t[f * 256 + (15 << 4 | 15)] = src[(size_t)(n - k + f) * 1024 + 30 * 32 + 31];
+		ct->n = (u16)k;
+		table_index(ct);
+	}
+	epd_free(src);
+	*slotp = ct;
+	return 0;
+nomem:
+	epd_free(src);
+	table_free(ct);
+	return -ENOMEM;
+}
+
+static struct epd_table *get_halo(struct epd_engine *e, const struct epd_update *u, const struct epd_table *table)
+{
+	struct epd_table **ct = &e->halo[e->t];
+
+	if (!e->gu_aa || u->full || epd_mode_is_regal(u->mode) ||
+	    epd_mode_slot(e->wf.mode_version, u->mode) != epd_mode_slot(e->wf.mode_version, EPD_MODE_GC16))
+		return NULL;
+	if (!*ct && build_halo(e, ct, table->n))
+		return NULL;
+	return (*ct)->drive[15 << 4 | 15] ? *ct : NULL;
+}
+
 static void req_free(struct epd_req *r)
 {
 	epd_free(r->target);
@@ -389,12 +443,39 @@ static void regal_aa_mark(struct epd_engine *e, struct epd_req *r)
 		r->mask[i] = (u8)(MASK_TODO | (r->mask[i] ? MASK_EDGE : 0));
 }
 
+static void halo_claim(struct epd_engine *e, const struct epd_req *r, const struct claim *c, struct claim *h)
+{
+	static const int dx[4] = { -1, 1, 0, 0 }, dy[4] = { 0, 0, -1, 1 };
+	const struct epd_update *u = &r->upd;
+	u32 x, y;
+	int k;
+
+	for (y = c->y0; y < c->y1; y++)
+		for (x = c->x0; x < c->x1; x++) {
+			u32 px = u->left + x, py = u->top + y;
+			size_t p = (size_t)py * e->w + px;
+
+			if (e->owner[p] != c->lut || e->state[p] >> 4 != 15 || (e->state[p] & 15) == 15)
+				continue;
+			for (k = 0; k < 4; k++) {
+				u32 qx = px + (u32)dx[k], qy = py + (u32)dy[k];
+				size_t q = (size_t)qy * e->w + qx;
+
+				if (qx >= e->w || qy >= e->h || e->owner[q] != EPD_IDLE || e->state[q] != 0xff)
+					continue;
+				e->owner[q] = (u8)h->lut;
+				claim_add(h, qx, qy);
+			}
+		}
+}
+
 static int merge(struct epd_engine *e, struct epd_req *r)
 {
 	const struct epd_update *u = &r->upd;
-	struct epd_table *table, *aat = NULL, *fallback = NULL;
+	struct epd_table *table, *aat = NULL, *fallback = NULL, *halo;
 	struct claim c = { .y0 = 0xffff, .x0 = 0xffff }, ca = { .lut = -1, .y0 = 0xffff, .x0 = 0xffff };
 	struct claim busy = { .lut = -1, .y0 = 0xffff, .x0 = 0xffff };
+	struct claim h = { .lut = -1, .y0 = 0xffff, .x0 = 0xffff };
 	bool aa = e->cfg.regal_aa && epd_mode_has_aa(u->mode), older = older_overlaps(e, r);
 	int ret;
 	u32 x, y;
@@ -408,6 +489,7 @@ static int merge(struct epd_engine *e, struct epd_req *r)
 	}
 	if (u->mode == EPD_MODE_A2 && get_table(e, EPD_MODE_DU, true, false, &fallback))
 		fallback = NULL;
+	halo = get_halo(e, u, table);
 	c.lut = free_lut(e, -1);
 	r->wait[0] = 0;
 	r->wait[1] = 0;
@@ -464,10 +546,17 @@ static int merge(struct epd_engine *e, struct epd_req *r)
 		}
 	}
 
+	if (halo && c.n && ca.lut < 0) {
+		h.lut = free_lut(e, c.lut);
+		if (h.lut >= 0)
+			halo_claim(e, r, &c, &h);
+	}
 	if (c.n)
 		activate_update(e, &c, table, u, u->mode, u->repeat);
 	if (ca.n)
 		activate_update(e, &ca, aa ? aat : fallback, u, aa ? u->mode : EPD_MODE_DU, false);
+	if (h.n)
+		activate(e, &h, halo, 0, 0, u->marker)->mode = u->mode;
 	if (busy.n) {
 		r->y0 = busy.y0;
 		r->y1 = busy.y1;
@@ -802,6 +891,7 @@ int epd_engine_set_temp_mc(struct epd_engine *e, int temp_mc)
 		for (i = 0; i < (size_t)e->wf.n_temps * per_t; i++)
 			if (i / per_t == (size_t)e->t)
 				cache_retire(&e->cache[i]);
+		cache_retire(&e->halo[e->t]);
 		e->t = t;
 	}
 	return 0;
@@ -831,6 +921,11 @@ int epd_engine_set_cut(struct epd_engine *e, int cut)
 void epd_engine_set_aa_all(struct epd_engine *e, bool all)
 {
 	e->aa_all = all;
+}
+
+void epd_engine_set_gu_aa(struct epd_engine *e, bool on)
+{
+	e->gu_aa = on;
 }
 
 int epd_engine_get_cut(const struct epd_engine *e)
@@ -868,8 +963,9 @@ struct epd_engine *epd_engine_create(const struct epd_engine_cfg *cfg, const u8 
 	e->state = epd_zalloc(px);
 	e->owner = epd_zalloc(px);
 	e->cache = epd_zalloc(sizeof(*e->cache) * e->wf.n_temps * e->wf.n_modes * CACHE_VARIANTS);
+	e->halo = epd_zalloc(sizeof(*e->halo) * e->wf.n_temps);
 	e->mark = epd_zalloc(px);
-	if (!e->state || !e->owner || !e->cache || !e->mark)
+	if (!e->state || !e->owner || !e->cache || !e->halo || !e->mark)
 		goto err_mem;
 	memset(e->owner, EPD_IDLE, px);
 	return e;
@@ -879,6 +975,7 @@ err_mem:
 	epd_free(e->owner);
 	epd_free(e->mark);
 	epd_free(e->cache);
+	epd_free(e->halo);
 err_wbf:
 	epd_wbf_release(&e->wf);
 err_free:
@@ -905,9 +1002,12 @@ void epd_engine_destroy(struct epd_engine *e)
 	n = (size_t)e->wf.n_temps * e->wf.n_modes * CACHE_VARIANTS;
 	for (k = 0; k < n; k++)
 		cache_retire(&e->cache[k]);
+	for (k = 0; k < e->wf.n_temps; k++)
+		cache_retire(&e->halo[k]);
 	cache_retire(&e->mode14[0]);
 	cache_retire(&e->mode14[1]);
 	epd_free(e->cache);
+	epd_free(e->halo);
 	epd_free(e->state);
 	epd_free(e->owner);
 	epd_free(e->mark);
